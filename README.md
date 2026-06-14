@@ -10,6 +10,7 @@ RouteIQ is an AI-powered public transit companion that helps commuters choose th
 ## 🚀 What It Does
 
 * Finds the **Fastest**, **Cheapest**, and **Most Comfortable** routes
+* Real time Live Tracking Achievable of Delhi Buses and sends pre alerts and notifications for departure
 * Uses AI to recommend the smartest option
 * Compares Transit vs Uber/Ola/Rapido/Auto costs
 * Dynamically replans routes during delays
