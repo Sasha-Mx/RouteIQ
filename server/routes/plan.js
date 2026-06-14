@@ -56,7 +56,7 @@ OUTPUT FORMAT (strict JSON):
   ]
 }`;
 
-  // Try with retry logic
+  // Try OpenRouter first
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
@@ -89,7 +89,6 @@ OUTPUT FORMAT (strict JSON):
       try {
         parsed = JSON.parse(rawText);
       } catch {
-        // Try extracting JSON from possible markdown wrapping
         const objMatch = rawText.match(/\{[\s\S]*\}/);
         if (objMatch) {
           try { parsed = JSON.parse(objMatch[0]); } catch { /* continue */ }
@@ -107,6 +106,46 @@ OUTPUT FORMAT (strict JSON):
     }
   }
 
+  // Try Groq as fallback LLM
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      console.log('Fetching route planning from Groq (Llama-3.3-70b-versatile)...');
+      const resp = await axios.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: 3000,
+          temperature: 0.25,
+          response_format: { type: 'json_object' }
+        },
+        { headers: { Authorization: `Bearer ${groqKey}` }, timeout: 15000 }
+      );
+
+      const rawText = resp.data.choices?.[0]?.message?.content?.trim() || '';
+      let parsed;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const objMatch = rawText.match(/\{[\s\S]*\}/);
+        if (objMatch) {
+          try { parsed = JSON.parse(objMatch[0]); } catch { /* continue */ }
+        }
+      }
+
+      if (parsed?.routes && Array.isArray(parsed.routes) && parsed.routes.length >= 1) {
+        console.log(`✓ AI route planning from Groq succeeded`);
+        return parsed.routes;
+      }
+    } catch (groqErr) {
+      console.warn(`✗ Groq route planning failed: ${groqErr.message}`);
+    }
+  }
+
   console.warn('AI route planning unavailable, using fallback estimation');
   return null;
 }
@@ -120,6 +159,26 @@ function buildFallbackLegs(originName, destName, distKm, mode) {
   const walkSpeedKmh = 5;
   const busSpeedKmh = 16;
   const metroSpeedKmh = 33;
+
+  // Geographic Check: Meerut Commutes
+  const isMeerutTrip = originName.toLowerCase().includes('meerut') || destName.toLowerCase().includes('meerut');
+  if (isMeerutTrip && distKm > 30) {
+    if (mode === 'fastest' || mode === 'comfort') {
+      return [
+        { mode: 'walk', minutes: 12, instruction: `Walk from ${cleanOrig} to nearest RRTS Station`, distance: '900m' },
+        { mode: 'metro', line: 'Namo Bharat (RRTS)', minutes: 48, instruction: `Board Namo Bharat RRTS train towards Delhi, alight at Sahibabad RRTS`, stops: 5 },
+        { mode: 'metro', line: 'Blue Line', minutes: 30, instruction: `Transfer to Blue Line Metro from Anand Vihar to welcome/destination hub`, stops: 8 },
+        { mode: 'walk', minutes: 10, instruction: `Walk to ${cleanDest}`, distance: '700m' }
+      ];
+    } else { // cheapest
+      return [
+        { mode: 'walk', minutes: 12, instruction: `Walk to Meerut Bus Terminal`, distance: '1km' },
+        { mode: 'bus', line: 'UPSRTC Bus', minutes: 95, instruction: `Board UPSRTC Bus towards ISBT Kashmere Gate`, stops: 12 },
+        { mode: 'metro', line: 'Yellow Line', minutes: 15, instruction: `Transfer to Yellow Line Metro to ${cleanDest}`, stops: 4 },
+        { mode: 'walk', minutes: 8, instruction: `Walk to ${cleanDest}`, distance: '600m' }
+      ];
+    }
+  }
 
   if (distKm < 2) {
     const walkMins = Math.round((distKm / walkSpeedKmh) * 60);
