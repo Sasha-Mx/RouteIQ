@@ -1120,63 +1120,60 @@ function RouteIQApp() {
     return `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  const handleRequestLocationImmediately = () => {
+    if (!navigator.geolocation) {
+      setWantsLocation(false);
+      localStorage.setItem('riq_wants_location', 'false');
+      showToast('Geolocation not supported. Please search manually.');
+      setOnboardingStep(3);
+      return;
+    }
+
+    showToast('Fetching your location...');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setOrigin({ name: 'Locating address...', lat, lng });
+        setWantsLocation(true);
+        localStorage.setItem('riq_wants_location', 'true');
+        setOnboardingStep(3);
+        try {
+          const address = await reverseGeocode(lat, lng, apiKey);
+          setOrigin({ name: address, lat, lng });
+          showToast('Location saved successfully!');
+        } catch {
+          setOrigin({ name: 'Current Location', lat, lng });
+          showToast('Location saved!');
+        }
+      },
+      (error) => {
+        setWantsLocation(false);
+        localStorage.setItem('riq_wants_location', 'false');
+        setOnboardingStep(3);
+        if (error && error.code === 1) {
+          showToast('Location permission denied by browser. Please search manually.');
+        } else {
+          showToast('Unable to determine location. Please search manually.');
+        }
+      },
+      { timeout: 10000 }
+    );
+  };
+
   // Onboarding completion with conditional location & notification permissions
-  // notificationSkipped: true = user clicked "Skip (Manual Location)", false = user clicked "Enable Notifications"
+  // notificationSkipped: true = user clicked "Skip Notifications", false = user clicked "Enable Notifications"
   const handleCompleteOnboarding = async (notificationSkipped) => {
     // 1. Save user details
     setUserName(tempName);
     setMattersMost(tempMatters);
     setUserAvatar(tempAvatar);
+    setIsOnboarded(true);
 
-    // 2. If user explicitly skipped/denied notifications, do NOT auto-fetch location.
     if (notificationSkipped) {
-      setIsOnboarded(true);
-      localStorage.setItem('riq_wants_location', 'false');
-      showToast('Notifications skipped. Please search your location manually.');
-      return;
-    }
-
-    // 3. User clicked "Enable Notifications" — honour their location preference.
-    if (wantsLocation) {
-      localStorage.setItem('riq_wants_location', 'true');
-      if (!navigator.geolocation) {
-        setIsOnboarded(true);
-        showToast('Geolocation not supported. Please search manually.');
-        return;
-      }
-
-      showToast('Fetching your location...');
-
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          setOrigin({ name: 'Locating address...', lat, lng });
-          setIsOnboarded(true);
-          try {
-            const address = await reverseGeocode(lat, lng, apiKey);
-            setOrigin({ name: address, lat, lng });
-            showToast('Welcome to RouteIQ! Location found.');
-          } catch {
-            setOrigin({ name: 'Current Location', lat, lng });
-            showToast('Welcome to RouteIQ!');
-          }
-        },
-        (error) => {
-          setIsOnboarded(true);
-          if (error && error.code === 1) {
-            // PERMISSION_DENIED
-            showToast('Location permission denied by browser. Please search manually.');
-          } else {
-            showToast('Unable to determine location. Please search manually.');
-          }
-        },
-        { timeout: 10000 }
-      );
+      showToast('Welcome to RouteIQ!');
     } else {
-      setIsOnboarded(true);
-      localStorage.setItem('riq_wants_location', 'false');
-      showToast('Welcome to RouteIQ! Search manually to plan routes.');
+      showToast('Welcome to RouteIQ! Notifications enabled.');
     }
   };
 
@@ -1526,9 +1523,7 @@ function RouteIQApp() {
                         <button
                           type="button"
                           onClick={() => {
-                            setWantsLocation(true);
-                            setOnboardingStep(3);
-                            showToast("Location request armed. Click Enable notifications to complete!");
+                            handleRequestLocationImmediately();
                           }}
                           className="w-full bg-[#584CF4] hover:bg-[#473CD3] text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all text-xs uppercase tracking-wider shadow-lg shadow-[#584CF4]/15 active:scale-[0.98]"
                         >
@@ -1540,6 +1535,7 @@ function RouteIQApp() {
                           type="button"
                           onClick={() => {
                             setWantsLocation(false);
+                            localStorage.setItem('riq_wants_location', 'false');
                             setOnboardingStep(3);
                             showToast("Location skipped. We will configure manual entry.");
                           }}
@@ -1558,7 +1554,7 @@ function RouteIQApp() {
                         </div>
                         <h3 className="text-lg font-semibold text-slate-900">Stay Informed</h3>
                         <p className="text-[11px] text-slate-400 font-semibold px-4 mt-1 leading-relaxed max-w-[280px]">
-                          Get alert reminders and delays. If you deny notification access, we won't auto-fetch your location.
+                          Get alert reminders and transit delay warnings delivered right to your device.
                         </p>
 
                         <div className="w-full max-w-[250px] mx-auto space-y-2.5 text-left mt-6">
@@ -1581,8 +1577,6 @@ function RouteIQApp() {
                         <button
                           type="button"
                           onClick={async () => {
-                            // Try to request notification permission, but regardless of result,
-                            // the user did NOT skip — so pass false (notificationSkipped = false).
                             if ('Notification' in window) {
                               try {
                                 await Notification.requestPermission();
@@ -1600,13 +1594,11 @@ function RouteIQApp() {
                         <button
                           type="button"
                           onClick={() => {
-                            // User explicitly skipped notifications.
-                            // Per requirement: do NOT fetch location automatically.
                             handleCompleteOnboarding(true);
                           }}
                           className="w-full py-2.5 text-center text-rose-500 hover:text-rose-600 font-semibold text-xs uppercase tracking-wider transition-colors"
                         >
-                          Skip (Manual Location)
+                          Skip Notifications
                         </button>
                       </div>
                     </div>
