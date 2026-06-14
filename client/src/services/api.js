@@ -208,3 +208,15 @@ export async function reverseGeocode(lat, lng, apiKey) {
   } catch {}
   return 'Current location';
 }
+
+export async function getExplorePlaces(name, lat, lng) {
+  try {
+    const url = `/api/places/explore?name=${encodeURIComponent(name)}&lat=${lat}&lng=${lng}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Explore proxy failed');
+    return res.json();
+  } catch (err) {
+    console.error('Explore places fetch error:', err);
+    return { places: [] };
+  }
+}

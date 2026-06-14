@@ -10,7 +10,7 @@ import { SkeletonLoader } from './components/SkeletonLoader';
 import MeetFriendsModal from './components/MeetFriendsModal';
 import ProfileModal from './components/ProfileModal';
 import Avatar from './components/Avatar';
-import { planRoute, getLiveVehicles, reverseGeocode, getLocalPlaceCoords } from './services/api';
+import { planRoute, getLiveVehicles, reverseGeocode, getLocalPlaceCoords, getExplorePlaces } from './services/api';
 
 // Icons
 import { 
@@ -48,7 +48,22 @@ import {
   Route,
   ExternalLink,
   Car,
-  Activity
+  Activity,
+  Plane,
+  Coffee,
+  Utensils,
+  Wine,
+  Landmark,
+  ShoppingBag,
+  ShoppingCart,
+  Trees,
+  Flower,
+  Map,
+  Cloud,
+  Share2,
+  Trophy,
+  Scale,
+  Plus
 } from 'lucide-react';
 
 function RouteIQApp() {
@@ -94,6 +109,14 @@ function RouteIQApp() {
   const [timeType, setTimeType] = useState('leave_by'); // 'leave_by' or 'arrive_by'
   const [activePref, setActivePref] = useState(mattersMost || 'time');
   const [isPrefChanging, setIsPrefChanging] = useState(false);
+
+  // Journey complete & explore places states
+  const [lastCompletedJourney, setLastCompletedJourney] = useState(null);
+  const [explorePlaces, setExplorePlaces] = useState([]);
+  const [exploreLoading, setExploreLoading] = useState(false);
+  const [exploreCategory, setExploreCategory] = useState('All');
+  const [selectedFeedback, setSelectedFeedback] = useState('reached_own');
+  const [activeSpot, setActiveSpot] = useState('Rajiv Chowk Metro Station');
 
   // API states
   const [loading, setLoading] = useState(false);
@@ -393,12 +416,17 @@ function RouteIQApp() {
         uber: 'Uber Go',
         ola: 'Ola Mini',
         rapido: 'Rapido Bike',
-        auto: 'Auto Rickshaw'
+        auto: 'Auto Rickshaw',
+        flight: 'Flight Estimate',
+        train: 'Intercity Train'
       };
       const brandName = brandNames[selectedAlternativeMode] || 'Cab';
       const brandCost = planResult.alternatives?.[selectedAlternativeMode]?.cost || 150;
       const brandTime = planResult.alternatives?.[selectedAlternativeMode]?.minutes || 20;
       
+      const transportMode = selectedAlternativeMode === 'flight' ? 'flight' : selectedAlternativeMode === 'train' ? 'train' : 'cab';
+      const verbName = selectedAlternativeMode === 'flight' ? 'Fly' : selectedAlternativeMode === 'train' ? 'Board' : 'Ride';
+
       return {
         label: `comfort_${selectedAlternativeMode}`,
         costEstimate: brandCost,
@@ -407,7 +435,7 @@ function RouteIQApp() {
         confidence: 95,
         legs: [
           { mode: 'walk', minutes: 1, instruction: 'Walk to pickup location' },
-          { mode: 'cab', minutes: brandTime, instruction: `Ride ${brandName} to ${destination.name.split(',')[0]}`, distance: `${planResult.distanceKm || 10} km` }
+          { mode: transportMode, minutes: brandTime, instruction: `${verbName} ${brandName} to ${destination.name.split(',')[0]}`, distance: `${planResult.distanceKm || 10} km` }
         ],
         polyline: planResult.routes[0]?.polyline || [
           [origin.lat, origin.lng],
@@ -423,12 +451,17 @@ function RouteIQApp() {
         uber: 'Uber Go',
         ola: 'Ola Mini',
         rapido: 'Rapido Bike',
-        auto: 'Auto Rickshaw'
+        auto: 'Auto Rickshaw',
+        flight: 'Flight Estimate',
+        train: 'Intercity Train'
       };
       const brandName = brandNames[selectedComfortMode] || 'Cab';
       const brandCost = planResult.alternatives?.[selectedComfortMode]?.cost || 150;
       const brandTime = planResult.alternatives?.[selectedComfortMode]?.minutes || 20;
       
+      const transportMode = selectedComfortMode === 'flight' ? 'flight' : selectedComfortMode === 'train' ? 'train' : 'cab';
+      const verbName = selectedComfortMode === 'flight' ? 'Fly' : selectedComfortMode === 'train' ? 'Board' : 'Ride';
+
       return {
         ...activeRoute,
         label: `comfort_${selectedComfortMode}`,
@@ -438,7 +471,7 @@ function RouteIQApp() {
         confidence: 95,
         legs: [
           { mode: 'walk', minutes: 1, instruction: 'Walk to pickup location' },
-          { mode: 'cab', minutes: brandTime, instruction: `Ride ${brandName} to ${destination.name.split(',')[0]}`, distance: `${planResult.distanceKm || 10} km` }
+          { mode: transportMode, minutes: brandTime, instruction: `${verbName} ${brandName} to ${destination.name.split(',')[0]}`, distance: `${planResult.distanceKm || 10} km` }
         ]
       };
     }
@@ -685,6 +718,44 @@ function RouteIQApp() {
     }
     return () => clearInterval(interval);
   }, [currentView, trackingStatus]);
+
+  // Auto-complete journey when countdown timer hits 0
+  useEffect(() => {
+    if (currentView === 'live_journey' && timerSeconds === 0 && route) {
+      const completedData = {
+        route,
+        comparison,
+        destination,
+        origin
+      };
+      setLastCompletedJourney(completedData);
+      endJourney();
+      setCurrentView('journey_complete');
+    }
+  }, [timerSeconds, currentView, route, comparison, destination, origin, endJourney]);
+
+  // Load explore places suggestions when journey complete screen opens
+  useEffect(() => {
+    if (currentView === 'journey_complete' && lastCompletedJourney?.destination?.name) {
+      setExploreLoading(true);
+      const destName = lastCompletedJourney.destination.name;
+      const lat = lastCompletedJourney.destination.lat || '';
+      const lng = lastCompletedJourney.destination.lng || '';
+      
+      getExplorePlaces(destName, lat, lng)
+        .then(data => {
+          if (data?.places) {
+            setExplorePlaces(data.places);
+          }
+        })
+        .catch(err => {
+          console.error('Error fetching explore places:', err);
+        })
+        .finally(() => {
+          setExploreLoading(false);
+        });
+    }
+  }, [currentView, lastCompletedJourney]);
 
   // Form time verification
   const handleTimeChange = (val) => {
@@ -1630,6 +1701,7 @@ function RouteIQApp() {
                     destCoords={destination.lat ? [destination.lat, destination.lng] : null}
                     showUserLocation={true}
                     userAvatar={userAvatar}
+                    distanceKm={planResult?.distanceKm}
                   />
 
 
@@ -2038,7 +2110,9 @@ function RouteIQApp() {
                                 <div key={legIdx} className="flex gap-2 text-[10px] items-start">
                                   <span className={`px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase ${
                                     leg.mode === 'walk' ? 'bg-emerald-50 text-emerald-600' :
-                                    leg.mode === 'bus' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'
+                                    leg.mode === 'bus' ? 'bg-blue-50 text-blue-600' :
+                                    leg.mode === 'flight' ? 'bg-indigo-50 text-indigo-600' :
+                                    leg.mode === 'train' ? 'bg-purple-50 text-purple-600' : 'bg-amber-50 text-amber-600'
                                   }`}>
                                     {leg.mode}
                                   </span>
@@ -2588,6 +2662,7 @@ function RouteIQApp() {
               vehicles={resultsVehicles}
               showUserLocation={true}
               userAvatar={userAvatar}
+              distanceKm={planResult?.distanceKm}
             />
 
             {/* Back Button (Top Left) */}
@@ -2860,13 +2935,14 @@ function RouteIQApp() {
                                 const isWalk = leg.mode === 'walk';
                                 const isMetro = leg.mode === 'metro';
                                 const isBus = leg.mode === 'bus';
+                                const isFlight = leg.mode === 'flight';
                                 return (
                                     <div key={i} className="relative flex items-start gap-3">
                                       {/* Timeline Node Icon */}
                                       <div className={`absolute -left-[31px] top-0 w-7 h-7 rounded-full border-2 border-white flex items-center justify-center shadow-sm ${
-                                        isWalk ? 'bg-emerald-50 text-emerald-600' : isBus ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
+                                        isWalk ? 'bg-emerald-50 text-emerald-600' : isBus ? 'bg-blue-50 text-blue-600' : isFlight ? 'bg-indigo-50 text-indigo-600' : 'bg-purple-50 text-purple-600'
                                       }`}>
-                                        {isWalk ? <Compass className="w-4 h-4" /> : isBus ? <Bus className="w-4 h-4" /> : <Train className="w-4 h-4" />}
+                                        {isWalk ? <Compass className="w-4 h-4" /> : isBus ? <Bus className="w-4 h-4" /> : isFlight ? <Plane className="w-4 h-4" /> : <Train className="w-4 h-4" />}
                                       </div>
                                       <div className="space-y-1 text-left">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">
@@ -2938,8 +3014,13 @@ function RouteIQApp() {
                               {[
                                 { key: 'uber', name: 'Uber Go', icon: <Car className="w-5 h-5" />, cost: planResult.alternatives?.uber?.cost || 176, time: planResult.alternatives?.uber?.minutes || 22 },
                                 { key: 'ola', name: 'Ola Mini', icon: <Car className="w-5 h-5" />, cost: planResult.alternatives?.ola?.cost || 160, time: planResult.alternatives?.ola?.minutes || 26 },
-                                { key: 'auto', name: 'Auto Rickshaw', icon: <Navigation className="w-5 h-5 rotate-45" />, cost: planResult.alternatives?.auto?.cost || 95, time: planResult.alternatives?.auto?.minutes || 28 },
-                                { key: 'rapido', name: 'Rapido Bike', icon: <Activity className="w-5 h-5" />, cost: planResult.alternatives?.rapido?.cost || 78, time: planResult.alternatives?.rapido?.minutes || 24 },
+                                ...(planResult.distanceKm > 150 ? [
+                                  { key: 'flight', name: 'Flight Estimate', icon: <Plane className="w-5 h-5" />, cost: planResult.alternatives?.flight?.cost || 5000, time: planResult.alternatives?.flight?.minutes || 180 },
+                                  { key: 'train', name: 'Intercity Train', icon: <Train className="w-5 h-5" />, cost: planResult.alternatives?.train?.cost || 800, time: planResult.alternatives?.train?.minutes || 720 }
+                                ] : [
+                                  { key: 'auto', name: 'Auto Rickshaw', icon: <Navigation className="w-5 h-5 rotate-45" />, cost: planResult.alternatives?.auto?.cost || 95, time: planResult.alternatives?.auto?.minutes || 28 },
+                                  { key: 'rapido', name: 'Rapido Bike', icon: <Activity className="w-5 h-5" />, cost: planResult.alternatives?.rapido?.cost || 78, time: planResult.alternatives?.rapido?.minutes || 24 }
+                                ])
                               ].map((cab) => {
                                 const isCabActive = selectedComfortMode === cab.key;
                                 return (
@@ -2999,14 +3080,14 @@ function RouteIQApp() {
                                 </div>
                                 <div className="relative flex items-start gap-2.5">
                                   <div className="absolute -left-[31px] top-0 w-7 h-7 rounded-full border-2 border-white bg-purple-50 text-purple-600 flex items-center justify-center shadow-sm">
-                                    <Car className="w-4 h-4" />
+                                    {selectedComfortMode === 'flight' ? <Plane className="w-4 h-4" /> : selectedComfortMode === 'train' ? <Train className="w-4 h-4" /> : <Car className="w-4 h-4" />}
                                   </div>
                                   <div className="text-left">
                                     <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-                                      Cab • {planResult.alternatives?.[selectedComfortMode]?.minutes || 20} min
+                                      {selectedComfortMode === 'flight' ? 'Flight' : selectedComfortMode === 'train' ? 'Train' : 'Cab'} • {planResult.alternatives?.[selectedComfortMode]?.minutes || 20} min
                                     </div>
                                     <p className="text-xs font-bold text-slate-700">
-                                      Ride {selectedComfortMode === 'uber' ? 'Uber Go' : selectedComfortMode === 'ola' ? 'Ola Mini' : selectedComfortMode === 'rapido' ? 'Rapido Bike' : 'Auto Rickshaw'} to {destination.name.split(',')[0]}
+                                      {selectedComfortMode === 'flight' ? 'Fly' : selectedComfortMode === 'train' ? 'Board Train' : 'Ride'} {selectedComfortMode === 'uber' ? 'Uber Go' : selectedComfortMode === 'ola' ? 'Ola Mini' : selectedComfortMode === 'rapido' ? 'Rapido Bike' : selectedComfortMode === 'flight' ? 'Flight' : selectedComfortMode === 'train' ? 'Intercity Train' : 'Auto Rickshaw'} to {destination.name.split(',')[0]}
                                     </p>
                                   </div>
                                 </div>
@@ -3218,8 +3299,13 @@ function RouteIQApp() {
               {[
                 { key: 'transit', name: 'Public Transit (Metro/Bus)', cost: `₹${planResult.alternatives?.transit?.cost || 44}`, time: `${planResult.alternatives?.transit?.minutes || 30} min`, label: '⭐ Recommended' },
                 { key: 'uber', name: 'Uber Go', icon: '🚕', cost: `₹${planResult.alternatives?.uber?.cost || 176}`, time: `${planResult.alternatives?.uber?.minutes || 22} min` },
-                { key: 'rapido', name: 'Rapido Bike', icon: '🏍️', cost: `₹${planResult.alternatives?.rapido?.cost || 78}`, time: `${planResult.alternatives?.rapido?.minutes || 24} min` },
-                { key: 'auto', name: 'Auto Rickshaw', icon: '🛺', cost: `₹${planResult.alternatives?.auto?.cost || 95}`, time: `${planResult.alternatives?.auto?.minutes || 28} min` },
+                ...(planResult.distanceKm > 150 ? [
+                  { key: 'flight', name: 'Flight Estimate', icon: '✈️', cost: `₹${planResult.alternatives?.flight?.cost || 5000}`, time: `${planResult.alternatives?.flight?.minutes || 180} min` },
+                  { key: 'train', name: 'Intercity Train', icon: '🚂', cost: `₹${planResult.alternatives?.train?.cost || 800}`, time: `${planResult.alternatives?.train?.minutes || 720} min` }
+                ] : [
+                  { key: 'rapido', name: 'Rapido Bike', icon: '🏍️', cost: `₹${planResult.alternatives?.rapido?.cost || 78}`, time: `${planResult.alternatives?.rapido?.minutes || 24} min` },
+                  { key: 'auto', name: 'Auto Rickshaw', icon: '🛺', cost: `₹${planResult.alternatives?.auto?.cost || 95}`, time: `${planResult.alternatives?.auto?.minutes || 28} min` }
+                ]),
                 { key: 'ola', name: 'Ola Mini', icon: '🚖', cost: `₹${planResult.alternatives?.ola?.cost || 160}`, time: `${planResult.alternatives?.ola?.minutes || 26} min` }
               ].map((cab) => {
                 const isSelected = selectedAlternativeMode === cab.key;
@@ -3340,6 +3426,7 @@ function RouteIQApp() {
                 showUserLocation={true}
                 mode={route.label || 'transit'}
                 userAvatar={userAvatar}
+                distanceKm={planResult?.distanceKm || route?.distanceKm}
               />
               {/* Live Indicator overlay */}
               <div className="absolute top-4 left-4 z-[400]">
@@ -3400,10 +3487,10 @@ function RouteIQApp() {
                     <ConfidenceRing value={isCabActive ? 98 : confidence} size={48} strokeWidth={4} />
                     <div>
                       <h5 className="text-xs font-semibold">
-                        {isCabActive ? 'Driver Sync Confidence' : 'On-Time Confidence'}
+                        {route.label?.includes('flight') ? 'Flight Status Sync' : route.label?.includes('train') ? 'Indian Railways GPS Sync' : isCabActive ? 'Driver Sync Confidence' : 'On-Time Confidence'}
                       </h5>
                       <p className="text-[9px] text-gray-400 font-bold uppercase mt-0.5">
-                        {isCabActive ? 'GPS & Dispatch Availability' : 'Live Bus & Traffic Sync'}
+                        {route.label?.includes('flight') ? 'Airport & Flight Tracking' : route.label?.includes('train') ? 'Live Train GPS tracking' : isCabActive ? 'GPS & Dispatch Availability' : 'Live Bus & Traffic Sync'}
                       </p>
                     </div>
                   </div>
@@ -3518,9 +3605,15 @@ function RouteIQApp() {
                 
                 <button
                   onClick={() => {
+                    const completedData = {
+                      route,
+                      comparison,
+                      destination,
+                      origin
+                    };
+                    setLastCompletedJourney(completedData);
                     endJourney();
-                    setCurrentView('home');
-                    setActiveTab('home_tab');
+                    setCurrentView('journey_complete');
                   }}
                   className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-colors shadow-lg shadow-rose-600/25"
                 >
@@ -3532,100 +3625,924 @@ function RouteIQApp() {
         );
       })()}
 
-      {/* VIEW: MEET FRIENDS */}
-      {currentView === 'meet_friends' && (
-        <div className="h-full flex flex-col justify-between relative page-enter text-gray-900">
-          <div className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-4 flex-shrink-0 shadow-sm">
-            <button onClick={() => setCurrentView('home')} className="p-1 hover:bg-gray-100 rounded-full">
-              <ArrowLeft className="w-5 h-5 text-gray-700" />
-            </button>
-            <div>
-              <h2 className="text-base font-semibold">Meet Friends</h2>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-none mt-0.5">Transit Midpoint Calculator</p>
-            </div>
-          </div>
-
-          <div className="screen-content flex-1 p-6 space-y-4">
-            <div>
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Your Location (Point A)</label>
-              <PlaceSearch
-                value={meetOrigin}
-                onChange={setMeetOrigin}
-                onSelect={setMeetOrigin}
-                placeholder="Search or geolocate location..."
-                icon={MapPin}
-                iconColor="text-emerald-500"
-                showMyLocation={true}
-              />
-            </div>
-
-            {friends.map((friend, idx) => (
-              <div key={friend.id}>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Friend Location ({idx + 1})</label>
-                <PlaceSearch
-                  value={friend}
-                  onChange={(val) => handleFriendLocationSelect(friend.id, val)}
-                  onSelect={(val) => handleFriendLocationSelect(friend.id, val)}
-                  placeholder="Enter friend starting point..."
-                  icon={MapPin}
-                  iconColor="text-rose-500"
-                />
-              </div>
-            ))}
-
-            {friends.length < 3 && (
-              <button
-                onClick={handleAddFriend}
-                className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
-              >
-                + Add Friend
-              </button>
-            )}
-
-            <button
-              onClick={handleCalculateMeetFriends}
-              disabled={friends.filter(f => f.lat).length === 0 || meetLoading}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-4 rounded-2xl text-xs uppercase tracking-wider flex justify-center items-center gap-2 transition-colors mt-4"
-            >
-              {meetLoading ? 'Finding Meeting Point...' : 'Find Meeting Point'}
-            </button>
-
-            {meetMidpointResult && (
-              <div className="space-y-4 pt-4 border-t border-gray-100">
-                <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-3xl flex justify-between items-center">
-                  <div>
-                    <span className="text-[8px] font-semibold uppercase text-indigo-500 leading-none">Best Midpoint</span>
-                    <h4 className="text-sm font-semibold text-gray-900 mt-1">{meetMidpointResult.spots[0].name}</h4>
-                    <p className="text-xs text-gray-500 mt-0.5">{meetMidpointResult.spots[0].desc}</p>
+      {/* VIEW: JOURNEY COMPLETE */}
+      {currentView === 'journey_complete' && (() => {
+        const totalDist = parseFloat(lastCompletedJourney?.route?.distanceKm || 12.1);
+        const traveledDist = parseFloat((totalDist * 0.71).toFixed(1));
+        const remainingDist = parseFloat((totalDist - traveledDist).toFixed(1));
+        const totalTime = parseInt(lastCompletedJourney?.route?.totalMinutes || 32);
+        const elapsedTime = parseInt((totalTime * 0.56).toFixed(0));
+        const estCost = lastCompletedJourney?.route?.costEstimate || 22;
+        const co2Saved = lastCompletedJourney?.comparison?.co2Saved || 0.18;
+        const moneySaved = lastCompletedJourney?.comparison?.moneySaved || 132;
+        const cabCost = Math.round(estCost + moneySaved);
+        
+        return (
+          <div className="h-full flex flex-col justify-between relative page-enter text-slate-800 bg-slate-50/60 overflow-y-auto">
+            {/* Top Header Bar */}
+            <div className="flex-shrink-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => {
+                    setCurrentView('home');
+                    setActiveTab('home_tab');
+                  }} 
+                  className="p-1 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-slate-600" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-sm shadow-indigo-500/20">
+                    <Navigation className="w-4 h-4 fill-current rotate-45 text-white" />
                   </div>
-                  <div className="text-right">
-                    <span className="text-[8px] font-semibold uppercase text-emerald-600 leading-none">Fairness</span>
-                    <div className="text-2xl font-semibold text-emerald-600 leading-none">{meetMidpointResult.spots[0].fairness}%</div>
+                  <span className="text-lg font-extrabold text-slate-800 tracking-tight">Route<span className="text-indigo-600">IQ</span></span>
+                </div>
+              </div>
+              
+              <button className="px-3.5 py-1.5 rounded-xl bg-indigo-50/60 text-indigo-600 border border-indigo-100/50 hover:bg-indigo-100 transition-colors text-xs font-bold flex items-center gap-1.5">
+                <Share2 className="w-3.5 h-3.5" />
+                Share Journey
+              </button>
+            </div>
+
+            {/* Scrollable Content Container */}
+            <div className="flex-1 p-6 space-y-6">
+              
+              {/* Card 1: Journey ended early warning */}
+              <div className="bg-gradient-to-r from-rose-50 to-pink-50/20 border border-rose-100/50 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+                
+                {/* Warning text side */}
+                <div className="flex items-start gap-4 z-10">
+                  <div className="w-12 h-12 rounded-full bg-rose-500 flex items-center justify-center text-white shadow-lg shadow-rose-500/25 flex-shrink-0">
+                    <AlertTriangle className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="space-y-1.5 text-left">
+                    <h3 className="text-lg font-extrabold text-rose-600 tracking-tight">Journey ended early</h3>
+                    <p className="text-xs text-slate-500 font-semibold leading-relaxed max-w-sm">
+                      We noticed you stopped tracking before reaching your destination.
+                    </p>
+                    <div className="flex items-center gap-2 text-xs font-bold text-rose-500 pt-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                      You are {remainingDist} km away from your destination
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-2.5">
-                  <span className="text-[9px] font-semibold uppercase text-gray-400 tracking-wider">Suggested meeting spots</span>
-                  {meetMidpointResult.spots.map((spot, idx) => (
-                    <div key={idx} className="bg-gray-50/60 border border-gray-100 p-4 rounded-2xl flex justify-between items-center">
-                      <div>
-                        <h5 className="text-xs font-bold text-gray-800">{spot.name}</h5>
-                        <p className="text-[10px] text-gray-400 mt-0.5">{spot.desc}</p>
-                      </div>
+                {/* Styled SVG Map Graphic */}
+                <div className="w-full md:w-48 h-24 flex items-center justify-center relative flex-shrink-0">
+                  {/* Cityscape background silhouette */}
+                  <svg className="absolute bottom-0 left-0 right-0 w-full h-12 text-rose-100 opacity-60" viewBox="0 0 200 50" fill="currentColor">
+                    <rect x="10" y="20" width="15" height="30" rx="1" />
+                    <rect x="30" y="10" width="20" height="40" rx="1" />
+                    <rect x="55" y="25" width="12" height="25" rx="1" />
+                    <rect x="72" y="15" width="18" height="35" rx="1" />
+                    <rect x="95" y="30" width="15" height="20" rx="1" />
+                    <rect x="115" y="5" width="25" height="45" rx="1" />
+                    <rect x="145" y="20" width="15" height="30" rx="1" />
+                    <rect x="165" y="15" width="20" height="35" rx="1" />
+                  </svg>
+                  
+                  {/* Dotted path SVG */}
+                  <svg className="w-full h-full relative z-10" viewBox="0 0 200 100">
+                    <path 
+                      d="M 15,80 C 50,60 80,90 120,60 C 140,45 160,30 185,20" 
+                      fill="none" 
+                      stroke="url(#roseGradient)" 
+                      strokeWidth="3" 
+                      strokeDasharray="6,4" 
+                    />
+                    <defs>
+                      <linearGradient id="roseGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#ef4444" />
+                        <stop offset="100%" stopColor="#6366f1" />
+                      </linearGradient>
+                    </defs>
+                    {/* Start (Travelled up to X) */}
+                    <circle cx="120" cy="60" r="10" fill="#ef4444" className="animate-ping opacity-25" />
+                    <circle cx="120" cy="60" r="7" fill="#ef4444" />
+                    <text x="120" y="63" fill="white" fontSize="9" fontWeight="bold" textAnchor="middle">×</text>
+                    
+                    {/* End destination */}
+                    <circle cx="185" cy="20" r="12" fill="#6366f1" className="opacity-15" />
+                    <path 
+                      d="M 185,8 C 181,8 178,11 178,15 C 178,20 185,27 185,27 C 185,27 192,20 192,15 C 192,11 189,8 185,8 Z" 
+                      fill="#6366f1" 
+                    />
+                    <circle cx="185" cy="14" r="2.5" fill="white" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Stats Row: 4 side-by-side columns */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Travelled */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow text-left">
+                  <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center text-violet-600 flex-shrink-0">
+                    <Clock className="w-5 h-5 text-violet-600" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Travelled</span>
+                    <span className="text-base font-extrabold text-slate-800 block mt-0.5">{traveledDist} km</span>
+                    <span className="text-[9px] font-semibold text-slate-400 block mt-0.5">of {totalDist} km</span>
+                  </div>
+                </div>
+
+                {/* Time Elapsed */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow text-left">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 flex-shrink-0">
+                    <Leaf className="w-5 h-5 text-emerald-500" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Time Elapsed</span>
+                    <span className="text-base font-extrabold text-slate-800 block mt-0.5">{elapsedTime} min</span>
+                    <span className="text-[9px] font-semibold text-slate-400 block mt-0.5">of {totalTime} min</span>
+                  </div>
+                </div>
+
+                {/* Est. Cost Incurred */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow text-left">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 flex-shrink-0">
+                    <span className="font-extrabold text-base text-amber-600">₹</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Est. Cost Incurred</span>
+                    <span className="text-base font-extrabold text-slate-800 block mt-0.5">₹{estCost}</span>
+                    <span className="text-[9px] font-semibold text-slate-400 block mt-0.5">(so far)</span>
+                  </div>
+                </div>
+
+                {/* CO2 Impact */}
+                <div className="bg-white border border-slate-100 rounded-3xl p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow text-left">
+                  <div className="w-12 h-12 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-500 flex-shrink-0">
+                    <Cloud className="w-5 h-5 text-sky-500" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">CO₂ Impact</span>
+                    <span className="text-base font-extrabold text-slate-800 block mt-0.5">{co2Saved} kg</span>
+                    <span className="text-[9px] font-semibold text-slate-400 block mt-0.5">(so far)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feedback Section */}
+              <div className="space-y-4 text-left">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800">Why did you end the journey?</h3>
+                  <p className="text-xs text-slate-400 font-semibold mt-0.5">Your feedback helps us improve RouteIQ for you.</p>
+                </div>
+                
+                {/* 5 Feedback cards row */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    { id: 'reached_own', label: 'Reached on my own', desc: 'I reached without transit', icon: User, bg: 'bg-violet-50 text-violet-600' },
+                    { id: 'took_cab', label: 'Took a cab / Auto', desc: 'I switched to another mode', icon: Car, bg: 'bg-amber-50 text-amber-600' },
+                    { id: 'missed_transit', label: 'Missed my bus / Train', desc: 'I missed the bus or train', icon: Bus, bg: 'bg-rose-50 text-rose-600' },
+                    { id: 'no_longer_needed', label: 'Route no longer needed', desc: 'My plans changed', icon: X, bg: 'bg-slate-100 text-slate-600' },
+                    { id: 'something_wrong', label: 'Something went wrong', desc: 'I faced an issue in the journey', icon: AlertTriangle, bg: 'bg-indigo-50 text-indigo-600' }
+                  ].map(card => {
+                    const isSelected = selectedFeedback === card.id;
+                    const Icon = card.icon;
+                    return (
                       <button
-                        onClick={() => handleSelectMeetMidpointGo(spot)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3 py-1.5 text-[10px] font-bold uppercase"
+                        key={card.id}
+                        onClick={() => setSelectedFeedback(card.id)}
+                        className={`border rounded-2xl p-4 text-center flex flex-col items-center justify-between gap-3 transition-all ${
+                          isSelected 
+                            ? 'border-indigo-600 bg-indigo-50/40 shadow-sm ring-1 ring-indigo-600/20' 
+                            : 'border-slate-100 bg-white hover:border-slate-200'
+                        }`}
                       >
-                        Go Here
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${isSelected ? 'bg-indigo-600 text-white' : card.bg} flex-shrink-0`}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[11px] font-extrabold text-slate-800 block leading-tight">{card.label}</span>
+                          <span className="text-[9px] font-semibold text-slate-400 block leading-tight mt-1">{card.desc}</span>
+                        </div>
                       </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Recommendations Section */}
+              <div className="space-y-4 text-left">
+                <h3 className="text-base font-extrabold text-slate-800">Recommended for you</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* Left Column: Replan Card */}
+                  <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between gap-5 relative">
+                    <div className="space-y-3">
+                      <span className="inline-block px-2.5 py-0.5 rounded bg-indigo-600 text-white font-extrabold text-[8px] uppercase tracking-wider">
+                        Best Option
+                      </span>
+                      <h4 className="text-sm font-extrabold text-slate-800">Want to reach your destination?</h4>
+                      <p className="text-[11px] text-slate-400 font-bold leading-none">Let's find the best route from your current location.</p>
+                      
+                      {/* Location timeline details */}
+                      <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-2xl space-y-4 relative mt-2">
+                        {/* Current Location */}
+                        <div className="flex gap-3 relative z-10">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1 flex-shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Your Current Location</span>
+                            <span className="text-xs font-bold text-slate-700 truncate block mt-0.5">
+                              {lastCompletedJourney?.destination?.name || 'Connaught Place, New Delhi'}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="absolute left-[19px] top-6 bottom-6 w-0.5 border-l border-dashed border-slate-200" />
+
+                        {/* Destination */}
+                        <div className="flex gap-3 relative z-10">
+                          <div className="w-2 h-2 rounded-full bg-rose-500 mt-1 flex-shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Destination</span>
+                            <span className="text-xs font-bold text-slate-700 truncate block mt-0.5">
+                              {lastCompletedJourney?.destination?.name || 'Ghaziabad, Uttar Pradesh'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Inner stats row */}
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">New ETA</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">18 min</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Distance</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">9.3 km</span>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-2.5 text-center">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Est. Fare</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">₹28</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        // Reset search forms to re-run planning
+                        setOrigin({ name: lastCompletedJourney?.destination?.name || 'Connaught Place, New Delhi', lat: lastCompletedJourney?.destination?.lat, lng: lastCompletedJourney?.destination?.lng });
+                        setDestination({ name: lastCompletedJourney?.destination?.name || 'Ghaziabad, Uttar Pradesh', lat: lastCompletedJourney?.destination?.lat, lng: lastCompletedJourney?.destination?.lng });
+                        setCurrentView('home');
+                        setActiveTab('home_tab');
+                      }}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 shadow-sm"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Replan Journey
+                    </button>
+                  </div>
+                  
+                  {/* Right Column: Trip Comparison */}
+                  <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between gap-4">
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-extrabold text-slate-800">Trip Comparison</h4>
+                      <p className="text-[11px] text-slate-400 font-bold leading-none">See how your current choice compares with transit.</p>
+                      
+                      {/* Comparison costs table */}
+                      <div className="space-y-2.5 pt-2">
+                        <div className="flex items-center justify-between py-1.5 border-b border-slate-50 text-xs font-semibold">
+                          <div className="flex items-center gap-2 text-slate-600">
+                            <Bus className="w-4 h-4 text-slate-400" />
+                            <span>Ideal Transit Cost</span>
+                          </div>
+                          <span className="text-slate-800 font-bold">₹{estCost}</span>
+                        </div>
+                        <div className="flex items-center justify-between py-1.5 text-xs font-semibold">
+                          <div className="flex items-center gap-2 text-slate-600">
+                            <Car className="w-4 h-4 text-slate-400" />
+                            <span>Est. Cab/Auto Cost</span>
+                          </div>
+                          <span className="text-rose-500 font-extrabold">₹{cabCost}</span>
+                        </div>
+                      </div>
+
+                      {/* Savings panel */}
+                      <div className="bg-emerald-50/40 border border-emerald-100/40 rounded-2xl p-4 flex items-center justify-between mt-2">
+                        <div className="space-y-1">
+                          <span className="text-[9px] font-extrabold text-emerald-600 uppercase tracking-widest block">You could have saved</span>
+                          <span className="text-2xl font-black text-emerald-700 block">₹{moneySaved}</span>
+                        </div>
+                        {/* Pink piggy bank icon */}
+                        <div className="w-14 h-14 bg-pink-100/70 border border-pink-200/50 rounded-2xl flex items-center justify-center relative shadow-inner">
+                          <span className="text-2xl">🐷</span>
+                          <span className="absolute -top-1 -right-1 text-xs">🪙</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Next time Tip banner */}
+                    <div className="flex items-start gap-2.5 bg-slate-50 rounded-2xl p-3.5 text-slate-600">
+                      <Sparkles className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0 animate-pulse" />
+                      <p className="text-[10px] font-bold text-slate-500 leading-normal">
+                        Next time, RouteIQ will alert you earlier so you never miss your transit!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Support Banner */}
+              <div className="bg-gradient-to-r from-violet-600 to-indigo-700 rounded-3xl p-6 shadow-md text-white flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+                <div className="flex items-center gap-4 z-10 text-left">
+                  <div className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white flex-shrink-0">
+                    <Sparkles className="w-6 h-6 text-indigo-200 animate-spin-slow" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-extrabold text-white">We're here to help!</h4>
+                    <p className="text-[10px] text-indigo-200 font-semibold leading-relaxed mt-0.5">
+                      Enable notifications and live tracking for the most accurate updates and smarter suggestions.
+                    </p>
+                  </div>
+                </div>
+                <button className="px-5 py-2.5 rounded-xl bg-white text-indigo-700 hover:bg-slate-50 transition-colors text-xs font-bold flex items-center gap-1.5 flex-shrink-0 shadow-sm border border-slate-100">
+                  <Bell className="w-3.5 h-3.5 fill-current" />
+                  ENABLE NOTIFICATIONS
+                </button>
+              </div>
+
+            </div>
+
+            {/* Bottom Nav Highlighted on 'Journeys' tab */}
+            <div className="flex-shrink-0 bg-white border-t border-slate-100 grid grid-cols-5 py-3">
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('home_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <User className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Home</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('home_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <Compass className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Plan</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('live_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <Navigation className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Live</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('journeys_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-indigo-600 font-bold"
+              >
+                <Clock className="w-4 h-4 text-indigo-600" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Journeys</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('profile_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <User className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">You</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* VIEW: MEET FRIENDS */}
+      {currentView === 'meet_friends' && (() => {
+        // Spot details mapper
+        const spotDetails = {
+          'Rajiv Chowk Metro Station': {
+            desc: 'Central interchange hub, equal metro lines.',
+            score: '96%',
+            walk: '2 min',
+            lines: '4 Metro Lines',
+            linesList: 'Blue, Yellow, Violet, Pink',
+            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+            friends: [
+              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '45 min', cost: '₹44', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
+              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '35 min', cost: '₹32', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
+              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '40 min', cost: '₹38', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            ]
+          },
+          'Cannaught Place': {
+            desc: 'Major interchange and commercial district.',
+            score: '88%',
+            walk: '3 min',
+            lines: '3 Metro Lines',
+            linesList: 'Blue, Yellow, Violet',
+            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+            friends: [
+              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '48 min', cost: '₹44', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
+              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '38 min', cost: '₹32', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
+              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '42 min', cost: '₹38', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            ]
+          },
+          'New Delhi Railway Station': {
+            desc: 'Railway + Metro connectivity hub.',
+            score: '82%',
+            walk: '5 min',
+            lines: '2 Metro Lines',
+            linesList: 'Yellow, Airport Express',
+            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+            friends: [
+              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '52 min', cost: '₹50', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
+              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '28 min', cost: '₹28', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
+              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '35 min', cost: '₹34', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            ]
+          },
+          'Karol Bagh Metro Station': {
+            desc: 'Good metro & bus connectivity.',
+            score: '75%',
+            walk: '6 min',
+            lines: '2 Metro Lines',
+            linesList: 'Blue Line, local bus network',
+            scoreColor: 'text-amber-600 bg-amber-50 border-amber-100',
+            friends: [
+              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '60 min', cost: '₹56', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
+              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '45 min', cost: '₹38', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
+              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '38 min', cost: '₹36', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            ]
+          }
+        };
+
+        const currentSpot = spotDetails[activeSpot] || spotDetails['Rajiv Chowk Metro Station'];
+        
+        return (
+          <div className="h-full flex flex-col justify-between relative page-enter text-slate-800 bg-slate-50/60 overflow-y-auto">
+            
+            {/* Header Area */}
+            <div className="flex-shrink-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => {
+                    setCurrentView('home');
+                    setActiveTab('home_tab');
+                  }} 
+                  className="p-1 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-slate-600" />
+                </button>
+                <div className="flex flex-col text-left">
+                  <h2 className="text-base font-extrabold text-slate-800">Meet Friends</h2>
+                  <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest leading-none mt-0.5">Transit Midpoint Calculator</span>
+                </div>
+              </div>
+              
+              <button className="px-3.5 py-1.5 rounded-xl bg-indigo-50/60 text-indigo-600 border border-indigo-100/50 hover:bg-indigo-100 transition-colors text-xs font-bold flex items-center gap-1.5">
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </button>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 p-6 space-y-6">
+              
+              {/* Destination/Meeting point input card */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-4 flex items-center justify-between shadow-sm hover:border-slate-200 transition-all text-left">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 flex-shrink-0">
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-extrabold text-slate-800 truncate">Ghaziabad, Uttar Pradesh</h4>
+                    <p className="text-[10px] text-indigo-600 font-bold mt-0.5">Find the best meeting point for everyone</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setMeetOrigin({ name: '', lat: null, lng: null });
+                  }} 
+                  className="p-1 hover:bg-slate-100 rounded-full"
+                >
+                  <X className="w-4 h-4 text-slate-400" />
+                </button>
+              </div>
+
+              {/* Friends list header */}
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-extrabold text-slate-800">Friends (3)</h3>
+                <button 
+                  onClick={() => {
+                    handleAddFriend();
+                  }}
+                  className="text-xs font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add Friend
+                </button>
+              </div>
+
+              {/* Friends Cards Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {currentSpot.friends.map((friend, idx) => (
+                  <div 
+                    key={idx} 
+                    className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4 text-left relative overflow-hidden"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${friend.color}`}>
+                        {friend.tag}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-slate-800">{friend.name}</h4>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${friend.dot}`} />
+                          <span className="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">{friend.loc}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stats inside card */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-50">
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                        <Bus className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{friend.time}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{friend.cost}</span>
+                      </div>
+                    </div>
+
+                    {/* Edit button */}
+                    <button 
+                      onClick={() => {
+                        // Open input to edit friend
+                      }}
+                      className="w-full text-center pt-2 text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center justify-center gap-1 border-t border-slate-50"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      Edit
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Best Meeting Point Card */}
+              <div className="bg-indigo-50/40 border border-indigo-100/50 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between gap-6 text-left">
+                
+                {/* Left side info */}
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-600/25 flex-shrink-0">
+                    <Trophy className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-widest block">Best Meeting Point</span>
+                    <h3 className="text-base font-extrabold text-slate-900">{activeSpot}</h3>
+                    <p className="text-xs text-slate-500 font-semibold">{currentSpot.desc}</p>
+                    
+                    {/* Fairness Score badge */}
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <div className={`px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wide flex items-center gap-1 ${currentSpot.scoreColor}`}>
+                        <span>Fairness Score: {currentSpot.score}</span>
+                      </div>
+                      <HelpCircle className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right side stats */}
+                <div className="flex flex-col justify-center gap-3 border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-6 flex-shrink-0">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <User className="w-4 h-4 text-slate-400" />
+                    <div>
+                      <span>{currentSpot.walk}</span>
+                      <span className="text-[10px] text-slate-400 font-semibold block">Walk from metro</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <Bus className="w-4 h-4 text-slate-400" />
+                    <div>
+                      <span>{currentSpot.lines}</span>
+                      <span className="text-[10px] text-slate-400 font-semibold block">{currentSpot.linesList}</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Map View Section */}
+              <div className="bg-white border border-slate-100 rounded-3xl p-2 shadow-sm overflow-hidden relative h-[360px]">
+                {/* SVG Mock Map with actual path graphics matching screenshot */}
+                <div className="absolute inset-0 z-0 bg-[#E8ECE9] overflow-hidden">
+                  
+                  {/* Styled roads & parks background */}
+                  <svg className="w-full h-full opacity-65" viewBox="0 0 500 300">
+                    {/* Parks */}
+                    <rect x="50" y="50" width="100" height="80" fill="#D2EBD4" rx="20" />
+                    <rect x="300" y="40" width="120" height="90" fill="#D2EBD4" rx="15" />
+                    <rect x="180" y="190" width="150" height="80" fill="#D2EBD4" rx="30" />
+                    
+                    {/* Roads */}
+                    <path d="M 0,150 L 500,150" stroke="white" strokeWidth="16" />
+                    <path d="M 250,0 L 250,300" stroke="white" strokeWidth="16" />
+                    <path d="M 50,0 L 450,300" stroke="white" strokeWidth="10" />
+                    <path d="M 50,300 L 450,0" stroke="white" strokeWidth="10" />
+                    
+                    {/* Inner dash road divider */}
+                    <path d="M 0,150 L 500,150" stroke="#E2E8F0" strokeWidth="1" strokeDasharray="5,5" />
+                    <path d="M 250,0 L 250,300" stroke="#E2E8F0" strokeWidth="1" strokeDasharray="5,5" />
+                  </svg>
+                  
+                  {/* Colored route lines converging at center */}
+                  <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 500 300">
+                    {/* Green Path from A (top left/mid) to Center */}
+                    <path 
+                      d="M 80,110 C 120,110 180,180 250,150" 
+                      fill="none" 
+                      stroke="#10b981" 
+                      strokeWidth="5" 
+                      strokeLinecap="round"
+                    />
+                    
+                    {/* Blue Path from B (top right) to Center */}
+                    <path 
+                      d="M 380,80 C 340,80 300,110 250,150" 
+                      fill="none" 
+                      stroke="#4f46e5" 
+                      strokeWidth="5" 
+                      strokeLinecap="round"
+                    />
+                    
+                    {/* Orange Path from C (bottom right) to Center */}
+                    <path 
+                      d="M 400,240 C 350,240 300,200 250,150" 
+                      fill="none" 
+                      stroke="#f97316" 
+                      strokeWidth="5" 
+                      strokeLinecap="round"
+                    />
+                  </svg>
+
+                  {/* Absolute overlay badges for markers */}
+                  {/* Center Midpoint Marker (Rajiv Chowk) */}
+                  <div className="absolute top-[150px] left-[250px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
+                    <div className="w-10 h-10 rounded-full bg-indigo-600 border-4 border-white shadow-lg flex items-center justify-center text-white">
+                      <Bus className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="bg-white/95 border border-slate-100 px-2 py-0.5 rounded shadow-sm text-[9px] font-extrabold text-slate-800 mt-1 uppercase tracking-wider">
+                      {activeSpot.split(' ')[0]}
+                    </span>
+                  </div>
+
+                  {/* Marker A (Ghaziabad) */}
+                  <div className="absolute top-[110px] left-[80px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
+                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
+                      <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-white font-extrabold text-[9px]">A</div>
+                      <span className="text-[10px] font-bold text-slate-700">Ghaziabad</span>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-emerald-700 mt-1">
+                      45 min • ₹44
+                    </div>
+                  </div>
+
+                  {/* Marker B (Model Town) */}
+                  <div className="absolute top-[80px] left-[380px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
+                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
+                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-white font-extrabold text-[9px]">B</div>
+                      <span className="text-[10px] font-bold text-slate-700">Model Town</span>
+                    </div>
+                    <div className="bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-indigo-700 mt-1">
+                      35 min • ₹32
+                    </div>
+                  </div>
+
+                  {/* Marker C (Samaypur Badli) */}
+                  <div className="absolute top-[240px] left-[400px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
+                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
+                      <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-white font-extrabold text-[9px]">C</div>
+                      <span className="text-[10px] font-bold text-slate-700">Samaypur Badli</span>
+                    </div>
+                    <div className="bg-orange-50 border border-orange-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-orange-700 mt-1">
+                      40 min • ₹38
+                    </div>
+                  </div>
+                </div>
+
+                {/* Left Side Map Controls Overlay */}
+                <div className="absolute left-4 top-4 z-20 flex flex-col gap-2 shadow-sm">
+                  {[
+                    { label: 'Center', icon: Compass },
+                    { label: 'Layers', icon: Map },
+                    { label: 'Traffic', icon: Navigation }
+                  ].map((ctrl, i) => {
+                    const Icon = ctrl.icon;
+                    return (
+                      <button 
+                        key={i}
+                        className="w-10 h-10 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 flex flex-col items-center justify-center text-slate-500 transition-colors"
+                      >
+                        <Icon className="w-4 h-4 text-slate-600" />
+                        <span className="text-[7px] font-bold text-slate-400 mt-0.5 uppercase">{ctrl.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Right Side Zoom Controls Overlay */}
+                <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-1.5 shadow-sm">
+                  <button className="w-8 h-8 rounded-lg bg-white border border-slate-100 hover:bg-slate-50 flex items-center justify-center text-slate-600 font-extrabold text-sm transition-colors">+</button>
+                  <button className="w-8 h-8 rounded-lg bg-white border border-slate-100 hover:bg-slate-50 flex items-center justify-center text-slate-600 font-extrabold text-sm transition-colors">-</button>
+                </div>
+              </div>
+
+              {/* Why this is the best meeting point Section */}
+              <div className="space-y-4 text-left">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-indigo-600 fill-indigo-100 animate-pulse" />
+                  <h3 className="text-sm font-extrabold text-slate-800">Why this is the best meeting point</h3>
+                </div>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[
+                    { title: 'Balanced Travel', desc: 'Most equal travel time for everyone', icon: Scale, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
+                    { title: 'Great Connectivity', desc: '4 metro lines & multiple exits', icon: Bus, bg: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
+                    { title: 'Easy Access', desc: '2 min walking from metro', icon: User, bg: 'bg-orange-50 text-orange-600 border-orange-100' },
+                    { title: 'Cost Effective', desc: 'Lowest combined travel cost', icon: Leaf, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
+                  ].map((feat, i) => {
+                    const Icon = feat.icon;
+                    return (
+                      <div 
+                        key={i} 
+                        className="bg-white border border-slate-100 rounded-2xl p-4 flex flex-col justify-between gap-3 text-left shadow-sm"
+                      >
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${feat.bg} flex-shrink-0`}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[11px] font-extrabold text-slate-800 block">{feat.title}</span>
+                          <span className="text-[9px] font-semibold text-slate-400 block leading-tight mt-1">{feat.desc}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Other Good Options Section */}
+              <div className="space-y-4 text-left">
+                <h3 className="text-sm font-extrabold text-slate-800">Other Good Options</h3>
+
+                <div className="space-y-3">
+                  {[
+                    { name: 'Cannaught Place', desc: 'Major interchange', score: '88%', walk: '3 min walk', lines: '3 metro lines' },
+                    { name: 'New Delhi Railway Station', desc: 'Railway + Metro connectivity', score: '82%', walk: '5 min walk', lines: '2 metro lines' },
+                    { name: 'Karol Bagh Metro Station', desc: 'Good metro & bus connectivity', score: '75%', walk: '6 min walk', lines: '2 metro lines' }
+                  ].map((opt, i) => (
+                    <div 
+                      key={i} 
+                      className={`bg-white border rounded-3xl p-4 transition-all shadow-sm space-y-3.5 text-left ${
+                        activeSpot === opt.name ? 'border-indigo-600 bg-indigo-50/10' : 'border-slate-100 hover:border-slate-200'
+                      }`}
+                    >
+                      {/* Top Row: Name, Desc and View Route Button */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-500 border border-slate-100 flex-shrink-0">
+                            <Bus className="w-4.5 h-4.5 text-slate-400" />
+                          </div>
+                          <div className="min-w-0 text-left">
+                            <h4 className="text-xs font-extrabold text-slate-800 truncate">{opt.name}</h4>
+                            <p className="text-[10px] text-slate-400 font-semibold truncate mt-0.5">{opt.desc}</p>
+                          </div>
+                        </div>
+                        
+                        <button
+                          onClick={() => setActiveSpot(opt.name)}
+                          className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase tracking-wider transition-colors shadow-sm flex-shrink-0"
+                        >
+                          View Route
+                        </button>
+                      </div>
+
+                      {/* Bottom Row: Stats list in a neat 3-column grid */}
+                      <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-50">
+                        {/* Fairness Score */}
+                        <div className="bg-emerald-50/50 border border-emerald-100/30 rounded-xl py-1.5 px-2 text-center flex flex-col justify-center items-center">
+                          <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wide leading-none">Fairness</span>
+                          <span className="text-xs font-extrabold text-emerald-600 block mt-1 leading-none">{opt.score}</span>
+                        </div>
+                        
+                        {/* Walk Time */}
+                        <div className="bg-slate-50 border border-slate-100/50 rounded-xl py-1.5 px-2 flex flex-col justify-center items-center">
+                          <div className="flex items-center gap-1">
+                            <User className="w-3 h-3 text-slate-400" />
+                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.walk.split(' ')[0]} min</span>
+                          </div>
+                          <span className="text-[7px] font-bold text-slate-400 uppercase tracking-wider mt-1 leading-none">Walk</span>
+                        </div>
+
+                        {/* Metro Lines */}
+                        <div className="bg-slate-50 border border-slate-100/50 rounded-xl py-1.5 px-2 flex flex-col justify-center items-center">
+                          <div className="flex items-center gap-1">
+                            <Bus className="w-3 h-3 text-slate-400" />
+                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.lines.split(' ')[0]} lines</span>
+                          </div>
+                          <span className="text-[7px] font-bold text-slate-400 uppercase tracking-wider mt-1 leading-none">Metro</span>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
+
+            </div>
+
+            {/* Bottom Large Action Button */}
+            <div className="p-6 bg-white border-t border-slate-100 flex-shrink-0">
+              <button
+                onClick={() => {
+                  setOrigin({ name: activeSpot, lat: 28.6328, lng: 77.2197 });
+                  setDestination({ name: 'Ghaziabad, Uttar Pradesh', lat: 28.6692, lng: 77.4538 });
+                  setCurrentView('home');
+                  setActiveTab('home_tab');
+                }}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-4 rounded-2xl text-xs uppercase tracking-wider transition-all flex flex-col items-center justify-center gap-1 shadow-lg shadow-indigo-600/20"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Navigation className="w-4 h-4 fill-current rotate-45 text-white" />
+                  <span>Plan Meeting Here</span>
+                </div>
+                <span className="text-[8px] font-semibold text-indigo-200 capitalize tracking-normal">Get step-by-step routes for all friends</span>
+              </button>
+            </div>
+
+            {/* Bottom Nav Highlighted on 'You' tab */}
+            <div className="flex-shrink-0 bg-white border-t border-slate-100 grid grid-cols-5 py-3">
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('home_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <User className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Home</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('home_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <Compass className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Plan</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('live_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <Navigation className="w-4 h-4" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Live</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('journeys_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600"
+              >
+                <Clock className="w-4 h-4 text-slate-400" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">Journeys</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setCurrentView('home');
+                  setActiveTab('profile_tab');
+                }} 
+                className="flex flex-col items-center justify-center gap-1 text-indigo-600 font-bold"
+              >
+                <User className="w-4 h-4 text-indigo-600" />
+                <span className="text-[9px] font-bold uppercase tracking-wider">You</span>
+              </button>
+            </div>
+
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* VIEW: FIND MIDPOINT */}
       {currentView === 'find_midpoint' && (

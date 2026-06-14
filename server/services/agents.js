@@ -183,7 +183,10 @@ OUTPUT FORMAT:
 };
 
 export async function evaluateRoutes(routes, preference, timeType, arrivalTime, alternatives) {
-  const prompt = `Evaluate these route options for a Delhi NCR journey:
+  const altKeys = Object.keys(alternatives);
+  const altStrings = altKeys.map(k => `- ${k.charAt(0).toUpperCase() + k.slice(1)}: ₹${alternatives[k].cost}, ${alternatives[k].minutes}min`).join('\n');
+
+  const prompt = `Evaluate these route options for a journey:
 User Preference: "${preference}".
 Time Setting: ${timeType === 'arrive_by' ? `Reach BY: ${arrivalTime}` : `Leave AT: ${arrivalTime || 'now'}`}.
 Current Time: ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}.
@@ -195,11 +198,8 @@ ${JSON.stringify(routes.map((r, i) => ({
     legs: r.legs?.map(l => `${l.mode}${l.line ? '(' + l.line + ')' : ''}: ${l.minutes}min`)
 })), null, 2)}
 
-Ride-Hailing:
-- Uber: ₹${alternatives.uber.cost}, ${alternatives.uber.minutes}min
-- Ola: ₹${alternatives.ola.cost}, ${alternatives.ola.minutes}min
-- Auto: ₹${alternatives.auto.cost}, ${alternatives.auto.minutes}min
-- Rapido: ₹${alternatives.rapido.cost}, ${alternatives.rapido.minutes}min
+Alternative / Ride-Hailing Options:
+${altStrings}
 
 Determine the best option. Output JSON only.`;
 
@@ -220,7 +220,7 @@ Determine the best option. Output JSON only.`;
       const fastestTransitMins = routes.reduce((min, r) => r.totalMinutes < min ? r.totalMinutes : min, 999);
       
       if (availableMinutes > 0 && fastestTransitMins > availableMinutes) {
-        recommendCab = alternatives.uber.minutes <= availableMinutes ? 'uber' : 'rapido';
+        recommendCab = (alternatives.uber?.minutes || 999) <= availableMinutes ? 'uber' : (alternatives.rapido ? 'rapido' : 'ola');
         recIdx = routes.findIndex(r => r.label === 'comfort');
         if (recIdx === -1) recIdx = 2;
       }
@@ -479,7 +479,10 @@ OUTPUT FORMAT:
 };
 
 export async function analyzeRouteCombined(routes, preference, timeType, arrivalTime, alternatives, distKm) {
-  const prompt = `Perform complete journey analysis for this Delhi NCR trip:
+  const altKeys = Object.keys(alternatives);
+  const altStrings = altKeys.map(k => `- ${k.charAt(0).toUpperCase() + k.slice(1)}: ₹${alternatives[k].cost}, ${alternatives[k].minutes}min`).join('\n');
+
+  const prompt = `Perform complete journey analysis for this trip:
 Distance: ${distKm.toFixed(1)} km. Preference: "${preference}".
 Time: ${timeType === 'arrive_by' ? `Reach BY: ${arrivalTime}` : `Leave AT: ${arrivalTime || 'now'}`}.
 Current Local Time: ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}.
@@ -492,11 +495,8 @@ ${JSON.stringify(routes.map((r, i) => ({
     legs: r.legs?.map(l => `${l.mode}${l.line ? '(' + l.line + ')' : ''}: ${l.minutes}min`)
 })), null, 2)}
 
-Ride-Hailing Alternatives:
-- Uber: ₹${alternatives.uber.cost}, ${alternatives.uber.minutes}min
-- Ola: ₹${alternatives.ola.cost}, ${alternatives.ola.minutes}min
-- Auto: ₹${alternatives.auto.cost}, ${alternatives.auto.minutes}min
-- Rapido: ₹${alternatives.rapido.cost}, ${alternatives.rapido.minutes}min
+Alternative Transport / Ride-Hailing Options:
+${altStrings}
 
 Generate evaluation, reliability, and cost-intelligence sections. Return valid JSON only.`;
 
@@ -515,7 +515,7 @@ Generate evaluation, reliability, and cost-intelligence sections. Return valid J
       const availableMinutes = (targetDate - now) / 60000;
       const fastestTransitMins = routes.reduce((min, r) => r.totalMinutes < min ? r.totalMinutes : min, 999);
       if (availableMinutes > 0 && fastestTransitMins > availableMinutes) {
-        recommendCab = alternatives.uber.minutes <= availableMinutes ? 'uber' : 'rapido';
+        recommendCab = (alternatives.uber?.minutes || 999) <= availableMinutes ? 'uber' : (alternatives.rapido ? 'rapido' : 'ola');
         recIdx = routes.findIndex(r => r.label === 'comfort');
         if (recIdx === -1) recIdx = 2;
       }
@@ -531,8 +531,8 @@ Generate evaluation, reliability, and cost-intelligence sections. Return valid J
 
   const transitCost = routes[0].costEstimate;
   const transitMins = routes[0].totalMinutes;
-  const saved = alternatives.uber.cost - transitCost;
-  const timeDiff = alternatives.uber.minutes - transitMins;
+  const saved = (alternatives.uber?.cost || 150) - transitCost;
+  const timeDiff = (alternatives.uber?.minutes || 20) - transitMins;
 
   return {
     agent: 'CombinedRouteAnalyst',
@@ -572,3 +572,101 @@ export const AGENT_REGISTRY = {
   ReplanStrategist: { icon: '🔄', label: 'Replan Strategist', model: 'Groq' },
   MeetingCoordinator: { icon: '📍', label: 'Meeting Coordinator', model: 'Gemini via OpenRouter' }
 };
+
+const EXPLORE_AGENT = {
+  name: 'ExploreAgent',
+  chain: ['openrouter-primary', 'groq', 'openrouter-free'],
+  role: `You are the EXPLORE AND RECOMMENDATION AGENT for RouteIQ. Your job is to suggest popular, real-world nearby places to visit at a destination.
+
+COMMAND DIRECTIVES:
+1. You receive a destination name and coordinates.
+2. Generate exactly 5 real-world places (e.g. landmarks, cafes, shopping centers, parks) near that destination.
+3. Classify each place into one of these categories: "Food & Drinks", "Attractions", "Shopping", "Nature".
+4. Provide realistic distance (between 0.1km to 3.0km), walking time (e.g. 1 km = 12 mins), ratings (4.2 - 4.9), review count, and a short description.
+5. Provide unique, relevant Lucide icon names for each place:
+   - "Food & Drinks" -> use "Coffee" or "Utensils" or "Wine"
+   - "Attractions" -> use "Compass" or "Landmark" or "MapPin"
+   - "Shopping" -> use "ShoppingBag" or "ShoppingCart"
+   - "Nature" -> use "Trees" or "Flower" or "Compass"
+6. Output ONLY valid JSON in the specified format. No markdown, no comments.`
+};
+
+export async function getNearbyExplorePlaces(destinationName, lat, lng) {
+  const prompt = `Generate 5 nearby attractions/places near the destination "${destinationName}" (latitude: ${lat}, longitude: ${lng}).
+Return JSON with this structure:
+{
+  "places": [
+    {
+      "name": "Place Name",
+      "category": "Food & Drinks" | "Attractions" | "Shopping" | "Nature",
+      "icon": "Coffee" | "Landmark" | "ShoppingBag" | "Trees",
+      "rating": 4.6,
+      "reviewsCount": "1.2K",
+      "description": "Short 1-sentence description.",
+      "distanceKm": 0.2,
+      "distanceMeters": 210,
+      "walkingMinutes": 3
+    }
+  ]
+}`;
+
+  const defaultFallback = () => ({
+    places: [
+      {
+        name: "Blue Tokai Coffee Roasters",
+        category: "Food & Drinks",
+        icon: "Coffee",
+        rating: 4.6,
+        reviewsCount: "1.2K",
+        description: "Specialty coffee, comfy vibes and great workspace.",
+        distanceKm: 0.2,
+        distanceMeters: 210,
+        walkingMinutes: 3
+      },
+      {
+        name: "India Gate",
+        category: "Attractions",
+        icon: "Landmark",
+        rating: 4.7,
+        reviewsCount: "25K",
+        description: "Iconic war memorial and a must-visit landmark in Delhi.",
+        distanceKm: 0.9,
+        distanceMeters: 950,
+        walkingMinutes: 12
+      },
+      {
+        name: "Select CITYWALK",
+        category: "Shopping",
+        icon: "ShoppingBag",
+        rating: 4.5,
+        reviewsCount: "8.7K",
+        description: "Premium shopping, dining and entertainment destination.",
+        distanceKm: 1.2,
+        distanceMeters: 1100,
+        walkingMinutes: 15
+      },
+      {
+        name: "Lodhi Garden",
+        category: "Nature",
+        icon: "Trees",
+        rating: 4.8,
+        reviewsCount: "6.2K",
+        description: "Peaceful garden with historic tombs and beautiful greenery.",
+        distanceKm: 1.5,
+        distanceMeters: 1400,
+        walkingMinutes: 18
+      }
+    ]
+  });
+
+  const exploreAgentDef = {
+    ...EXPLORE_AGENT,
+    fallbackFn: defaultFallback
+  };
+
+  const result = await invokeAgent(exploreAgentDef, prompt);
+  if (result?.data && Array.isArray(result.data.places) && result.data.places.length > 0) {
+    return result.data;
+  }
+  return defaultFallback();
+}

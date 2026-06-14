@@ -1,7 +1,20 @@
 import { Router } from 'express';
 import axios from 'axios';
+import { getNearbyExplorePlaces } from '../services/agents.js';
 
 const router = Router();
+
+router.get('/explore', async (req, res) => {
+  try {
+    const { name, lat, lng } = req.query;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const data = await getNearbyExplorePlaces(name, parseFloat(lat), parseFloat(lng));
+    res.json(data);
+  } catch (err) {
+    console.error('Explore places API error:', err.message);
+    res.status(500).json({ error: 'Failed to explore places' });
+  }
+});
 
 router.get('/autocomplete', async (req, res) => {
   try {

@@ -16,9 +16,47 @@ async function generateRouteLegsWithAI(origin, destination, originLat, originLng
   const currentTime = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
   const currentDay = new Date().toLocaleDateString('en-IN', { weekday: 'long' });
 
-  const systemPrompt = `You are a Delhi/NCR public transit routing expert. You know EVERY bus route number, metro line, metro station, bus stop, and walking path in Delhi NCR. You generate precise, real-world transit directions. Output ONLY valid JSON — no markdown, no explanation.`;
+  const isLongDistance = distKm > 150;
 
-  const userPrompt = `Generate 3 realistic multimodal transit routes from "${origin}" (${originLat}, ${originLng}) to "${destination}" (${destLat}, ${destLng}).
+  const systemPrompt = isLongDistance
+    ? `You are an expert intercity and flight travel planner. You generate precise, real-world flight and train transit directions between major cities. Output ONLY valid JSON — no markdown, no explanation.`
+    : `You are a Delhi/NCR public transit routing expert. You know EVERY bus route number, metro line, metro station, bus stop, and walking path in Delhi NCR. You generate precise, real-world transit directions. Output ONLY valid JSON — no markdown, no explanation.`;
+
+  const userPrompt = isLongDistance
+    ? `Generate 3 realistic travel routes from "${origin}" (${originLat}, ${originLng}) to "${destination}" (${destLat}, ${destLng}).
+
+Distance: ${distKm.toFixed(1)} km. Current time: ${currentTime}, ${currentDay}.
+User preference: ${preference}.
+
+CRITICAL RULES — FOLLOW EXACTLY:
+1. For the "fastest" route, suggest a direct flight or a flight with a short layover (e.g. key legs: Walk/Cab -> Airport -> Flight -> Cab/Walk to destination).
+2. For the "cheapest" route, suggest an express or intercity train (e.g., Walk/Metro -> Delhi Jn / New Delhi Railway Station -> Intercity Express Train -> Cab/Auto/Walk to destination).
+3. For the "comfort" route, suggest a flight or premium AC express train (like Rajdhani or Shatabdi Express).
+4. Do NOT suggest local transit (Delhi Metro / DTC buses) for the major intercity portion. Local transit can only be used at the origin/destination ends (e.g., getting to the airport or railway station).
+5. Label the 3 routes: "fastest", "cheapest", "comfort".
+6. Walking distances must be realistic.
+7. Provide realistic travel times and fares (e.g., flights around ₹3000-8000, train around ₹500-2000 depending on distance/class).
+8. Provide 4-6 intermediate polyline waypoints spanning from origin to destination coordinates.
+
+OUTPUT FORMAT (strict JSON):
+{
+  "routes": [
+    {
+      "label": "fastest",
+      "totalMinutes": <number>,
+      "costEstimate": <number in rupees>,
+      "transfers": <number>,
+      "confidence": <75-95>,
+      "legs": [
+        { "mode": "walk", "minutes": <number>, "instruction": "Walk or local cab to origin transit hub", "distance": "5km" },
+        { "mode": "flight", "line": "Direct Flight", "minutes": <number>, "instruction": "Board flight from origin airport to destination airport", "stops": 0 },
+        { "mode": "walk", "minutes": <number>, "instruction": "Cab or walk to final destination", "distance": "5km" }
+      ],
+      "polyline": [[lat1,lng1], [lat2,lng2], ...]
+    }
+  ]
+}`
+    : `Generate 3 realistic multimodal transit routes from "${origin}" (${originLat}, ${originLng}) to "${destination}" (${destLat}, ${destLng}).
 
 Distance: ${distKm.toFixed(1)} km. Current time: ${currentTime}, ${currentDay}.
 User preference: ${preference}.
@@ -160,9 +198,18 @@ function buildFallbackLegs(originName, destName, distKm, mode) {
   const busSpeedKmh = 16;
   const metroSpeedKmh = 33;
 
-  // Geographic Check: Meerut Commutes
+  // Intercity / Interstate Commutes (Long Distance Fallback)
+  if (distKm > 200) {
+    return [
+      { mode: 'walk', minutes: 20, instruction: `Travel to nearest airport or railway station from ${cleanOrig}`, distance: '5km' },
+      { mode: 'metro', line: 'Intercity Train / Flight', minutes: Math.round((distKm / 500) * 60), instruction: `Board intercity transport to ${cleanDest}`, stops: 1 },
+      { mode: 'walk', minutes: 20, instruction: `Travel to destination area in ${cleanDest}`, distance: '5km' }
+    ];
+  }
+
+  // Geographic Check: Meerut Commutes (NCR region only)
   const isMeerutTrip = originName.toLowerCase().includes('meerut') || destName.toLowerCase().includes('meerut');
-  if (isMeerutTrip && distKm > 30) {
+  if (isMeerutTrip && distKm > 30 && distKm < 150) {
     if (mode === 'fastest' || mode === 'comfort') {
       return [
         { mode: 'walk', minutes: 12, instruction: `Walk from ${cleanOrig} to nearest RRTS Station`, distance: '900m' },
@@ -335,10 +382,20 @@ router.post('/', async (req, res) => {
     const altData = {
       transit: { cost: transitFare, minutes: transitMins },
       uber: { cost: uberFare, minutes: uberMins },
-      rapido: { cost: rapidoFare, minutes: Math.round(distKm * 2 + 3) },
-      auto: { cost: autoFare, minutes: Math.round(distKm * 3 + 8) },
       ola: { cost: olaFare, minutes: Math.round(distKm * 2.8 + 6) }
     };
+
+    if (distKm > 150) {
+      const flightMins = Math.round((distKm / 750) * 60 + 150);
+      const flightCost = Math.round(3500 + distKm * 1.5);
+      const trainMins = Math.round((distKm / 65) * 60);
+      const trainCost = Math.round(450 + distKm * 0.8);
+      altData.flight = { cost: flightCost, minutes: flightMins };
+      altData.train = { cost: trainCost, minutes: trainMins };
+    } else {
+      altData.rapido = { cost: rapidoFare, minutes: Math.round(distKm * 2 + 3) };
+      altData.auto = { cost: autoFare, minutes: Math.round(distKm * 3 + 8) };
+    }
 
     // ═══ Step 3: AGENT PIPELINE — AI evaluates the fetched data ═══
     // Call combined agent which performs all analyses in a single LLM roundtrip (saving ~10 seconds of latency)

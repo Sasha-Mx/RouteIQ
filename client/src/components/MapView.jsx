@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Route } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 let L;
@@ -62,7 +63,8 @@ export default function MapView({
   activeVehiclePos = null,
   showUserLocation = false,
   mode = 'transit',
-  userAvatar = 'male'
+  userAvatar = 'male',
+  distanceKm = null
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -327,6 +329,14 @@ export default function MapView({
   return (
     <div className="relative w-full overflow-hidden shadow-inner" style={{ height }}>
       <div ref={mapContainerRef} className="w-full h-full" />
+      {distanceKm && (
+        <div className="absolute top-4 left-4 z-[999] bg-white/95 backdrop-blur-md border border-slate-200 px-3 py-1.5 rounded-2xl shadow-lg flex items-center gap-1.5 transition-all duration-200 hover:scale-105 select-none">
+          <Route className="w-4 h-4 text-[#584CF4]" />
+          <span className="text-[11px] font-extrabold text-slate-800 tracking-wide">
+            {distanceKm > 99 ? Math.round(distanceKm) : distanceKm.toFixed(1)} km
+          </span>
+        </div>
+      )}
     </div>
   );
 }
