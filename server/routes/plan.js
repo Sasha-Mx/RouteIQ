@@ -69,7 +69,7 @@ OUTPUT FORMAT (strict JSON):
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          max_tokens: 3000,
+          max_tokens: 1200,
           temperature: 0.25
         },
         {
@@ -119,7 +119,7 @@ OUTPUT FORMAT (strict JSON):
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          max_tokens: 3000,
+          max_tokens: 1200,
           temperature: 0.25,
           response_format: { type: 'json_object' }
         },

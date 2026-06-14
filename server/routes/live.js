@@ -243,6 +243,7 @@ JSON Structure:
           messages: [
             { role: 'user', content: prompt }
           ],
+          max_tokens: 1000,
           temperature: 0.3
         },
         { headers: { Authorization: `Bearer ${openRouterKey}` }, timeout: 12000 }
