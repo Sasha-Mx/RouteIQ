@@ -69,7 +69,7 @@ Departure reminders, delay alerts, and contextual nudges.
 
 **AI**
 
-* Gemini 2.0 Flash
+* Gemini 2.5 Flash
 * Groq Llama 3.3
 * OpenRouter Llama 3.1
 
