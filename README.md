@@ -11,9 +11,7 @@ RouteIQ is an AI-powered public transit companion that helps commuters choose th
 
 * Finds the **Fastest**, **Cheapest**, and **Most Comfortable** routes
 * Uses AI to recommend the smartest option
-* Tracks buses live using GTFS-Realtime data
 * Compares Transit vs Uber/Ola/Rapido/Auto costs
-* Sends real-time alerts and departure reminders
 * Dynamically replans routes during delays
 * Supports Meet Friends and Midpoint planning
 * Calculates money saved and CO₂ reduction
