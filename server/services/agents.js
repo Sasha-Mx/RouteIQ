@@ -404,44 +404,109 @@ Should user switch routes? Output JSON only.`;
 const MEETING_COORDINATOR = {
   name: 'MeetingCoordinator',
   chain: ['openrouter-primary', 'groq'],
-  role: `You are the MEETING COORDINATOR AGENT for RouteIQ.
+  role: `You are the MEETING COORDINATOR AGENT for RouteIQ, a Delhi NCR transit intelligence platform.
 
 COMMAND DIRECTIVES:
-1. You receive locations of multiple people in Delhi NCR.
-2. Calculate the BEST meeting point that minimizes total travel time for everyone.
-3. Prioritize well-connected transit hubs (metro stations, major bus stops).
-4. Assess fairness — no single person should travel disproportionately longer.
-5. Output ONLY valid JSON.
+1. You receive locations of multiple people in Delhi NCR (with names and coordinates).
+2. Find 3-4 best meeting points that minimize total travel time for everyone.
+3. Prioritize well-connected transit hubs (metro stations, major bus stops, landmark areas).
+4. For EACH meeting point, estimate realistic per-person travel time and transit cost from their location.
+5. Assess fairness — no single person should travel disproportionately longer.
+6. Include metro line connectivity details for each meeting point.
+7. Output ONLY valid JSON. No markdown. No explanation.
 
 OUTPUT FORMAT:
 {
-  "name": "<place name>",
-  "lat": <latitude>,
-  "lng": <longitude>,
-  "reason": "<why this spot, under 25 words>",
-  "fairnessScore": <70-100>,
-  "etas": ["<person1 ETA>", "<person2 ETA>"]
+  "spots": [
+    {
+      "name": "<real place name, e.g. Rajiv Chowk Metro Station>",
+      "desc": "<short 8-word description>",
+      "lat": <latitude>,
+      "lng": <longitude>,
+      "fairnessScore": <70-100>,
+      "walkFromMetro": "<e.g. 2 min>",
+      "metroLines": "<e.g. 4 Metro Lines>",
+      "metroLinesList": "<e.g. Blue, Yellow, Violet, Pink>",
+      "whyBest": ["<reason1 under 5 words>", "<reason2>", "<reason3>", "<reason4>"],
+      "perPerson": [
+        { "name": "<person name>", "etaMinutes": <number>, "costRupees": <number> }
+      ]
+    }
+  ]
 }`
 };
 
 export async function coordinateMeeting(locations, names) {
-  const prompt = `Find the best meeting point in Delhi NCR for:
-${locations.map((l, i) => `${names[i]}: lat ${l.lat}, lng ${l.lng}`).join('\n')}
-Prioritize metro stations or major transit hubs. Ensure fairness. Output JSON only.`;
+  const prompt = `Find 3-4 best meeting points in Delhi NCR for these people:
+${locations.map((l, i) => `${names[i]}: lat ${l.lat}, lng ${l.lng} (${l.name || 'Unknown'})`).join('\n')}
+
+RULES:
+- First spot should be the BEST option (highest fairness score).
+- Use REAL Delhi NCR metro stations, landmarks, or transit hubs as meeting points.
+- Estimate REALISTIC travel times based on actual transit (metro + walk). Use ~33 km/h for metro, 5 km/h walking, 15-20 km/h for bus.
+- Estimate REALISTIC transit costs: metro ₹10-60, bus ₹10-40 based on distance.
+- Include which metro lines serve each meeting point.
+- Calculate fairness as: 100 - (max_eta - min_eta) / max_eta * 30.
+Output JSON only.`;
 
   const result = await invokeAgent(MEETING_COORDINATOR, prompt);
-  if (result.data) return result;
+  if (result.data?.spots && Array.isArray(result.data.spots) && result.data.spots.length > 0) {
+    return result;
+  }
 
-  const lat = locations.reduce((s, l) => s + l.lat, 0) / locations.length;
-  const lng = locations.reduce((s, l) => s + l.lng, 0) / locations.length;
+  // Rule-based fallback with distance calculations
+  const avgLat = locations.reduce((s, l) => s + l.lat, 0) / locations.length;
+  const avgLng = locations.reduce((s, l) => s + l.lng, 0) / locations.length;
+
+  // Well-known Delhi NCR hubs
+  const hubs = [
+    { name: 'Rajiv Chowk Metro Station', lat: 28.6328, lng: 77.2197, desc: 'Central interchange hub, equal metro lines.', walk: '2 min', lines: '4 Metro Lines', linesList: 'Blue, Yellow, Violet, Pink' },
+    { name: 'Connaught Place', lat: 28.6315, lng: 77.2167, desc: 'Major interchange and commercial district.', walk: '3 min', lines: '3 Metro Lines', linesList: 'Blue, Yellow, Violet' },
+    { name: 'Kashmere Gate Metro Station', lat: 28.6666, lng: 77.2287, desc: 'Northern hub with Red, Yellow, Violet lines.', walk: '1 min', lines: '3 Metro Lines', linesList: 'Red, Yellow, Violet' },
+    { name: 'Central Secretariat Metro Station', lat: 28.6180, lng: 77.2118, desc: 'Yellow and Violet line interchange.', walk: '2 min', lines: '2 Metro Lines', linesList: 'Yellow, Violet' },
+    { name: 'Karol Bagh Metro Station', lat: 28.6513, lng: 77.1905, desc: 'Good metro & bus connectivity.', walk: '4 min', lines: '2 Metro Lines', linesList: 'Blue Line, local bus network' },
+    { name: 'New Delhi Railway Station', lat: 28.6429, lng: 77.2217, desc: 'Railway + Metro connectivity hub.', walk: '5 min', lines: '2 Metro Lines', linesList: 'Yellow, Airport Express' }
+  ];
+
+  // Sort hubs by distance to geographic center
+  const scored = hubs.map(h => {
+    const distToCenter = Math.sqrt(Math.pow(h.lat - avgLat, 2) + Math.pow(h.lng - avgLng, 2));
+    const perPerson = locations.map((l, i) => {
+      const dist = Math.sqrt(Math.pow(l.lat - h.lat, 2) + Math.pow(l.lng - h.lng, 2)) * 111; // rough km
+      const etaMinutes = Math.max(10, Math.round(dist * 3 + 5));
+      const costRupees = Math.max(10, Math.round(dist * 4 + 8));
+      return { name: names[i], etaMinutes, costRupees };
+    });
+    const maxEta = Math.max(...perPerson.map(p => p.etaMinutes));
+    const minEta = Math.min(...perPerson.map(p => p.etaMinutes));
+    const fairness = Math.round(100 - ((maxEta - minEta) / maxEta) * 30);
+
+    return {
+      name: h.name,
+      desc: h.desc,
+      lat: h.lat,
+      lng: h.lng,
+      fairnessScore: fairness,
+      walkFromMetro: h.walk,
+      metroLines: h.lines,
+      metroLinesList: h.linesList,
+      whyBest: ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective'],
+      perPerson,
+      distToCenter
+    };
+  });
+
+  scored.sort((a, b) => {
+    // Sort by fairness first, then by distance to center
+    if (Math.abs(a.fairnessScore - b.fairnessScore) > 5) return b.fairnessScore - a.fairnessScore;
+    return a.distToCenter - b.distToCenter;
+  });
+
+  const spots = scored.slice(0, 4).map(({ distToCenter, ...s }) => s);
+
   return {
     agent: 'MeetingCoordinator', model: 'rule-based', ms: 0,
-    data: {
-      name: 'Central Meeting Point', lat, lng,
-      reason: 'Geographic center of all locations.',
-      fairnessScore: 85,
-      etas: names.map(() => '~20 min')
-    }
+    data: { spots }
   };
 }
 

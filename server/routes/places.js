@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import axios from 'axios';
-import { getNearbyExplorePlaces } from '../services/agents.js';
+import { getNearbyExplorePlaces, coordinateMeeting } from '../services/agents.js';
 
 const router = Router();
 
@@ -79,6 +79,31 @@ router.get('/details', async (req, res) => {
   } catch (err) {
     console.error('Places details proxy error:', err.message);
     res.status(500).json({ error: 'Failed to fetch place details' });
+  }
+});
+
+router.post('/meet', async (req, res) => {
+  try {
+    const { locations, names } = req.body;
+    if (!locations || !Array.isArray(locations) || locations.length < 2) {
+      return res.status(400).json({ error: 'At least 2 locations are required' });
+    }
+    if (!names || !Array.isArray(names) || names.length !== locations.length) {
+      return res.status(400).json({ error: 'Names array must match locations array length' });
+    }
+
+    console.log(`[MeetFriends] Calculating meeting point for ${names.join(', ')}...`);
+    const result = await coordinateMeeting(locations, names);
+    
+    res.json({
+      agent: result.agent,
+      model: result.model,
+      ms: result.ms,
+      spots: result.data?.spots || []
+    });
+  } catch (err) {
+    console.error('Meet friends API error:', err.message);
+    res.status(500).json({ error: 'Failed to calculate meeting point' });
   }
 });
 

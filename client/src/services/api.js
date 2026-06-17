@@ -220,3 +220,18 @@ export async function getExplorePlaces(name, lat, lng) {
     return { places: [] };
   }
 }
+
+export async function meetFriends(locations, names) {
+  try {
+    const res = await fetch(`${BASE}/api/places/meet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locations, names })
+    });
+    if (!res.ok) throw new Error('Meet friends API failed');
+    return res.json();
+  } catch (err) {
+    console.error('Meet friends fetch error:', err);
+    return { spots: [] };
+  }
+}

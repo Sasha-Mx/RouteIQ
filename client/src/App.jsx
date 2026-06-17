@@ -10,7 +10,7 @@ import { SkeletonLoader } from './components/SkeletonLoader';
 import MeetFriendsModal from './components/MeetFriendsModal';
 import ProfileModal from './components/ProfileModal';
 import Avatar from './components/Avatar';
-import { planRoute, getLiveVehicles, reverseGeocode, getLocalPlaceCoords, getExplorePlaces } from './services/api';
+import { planRoute, getLiveVehicles, reverseGeocode, getLocalPlaceCoords, getExplorePlaces, meetFriends } from './services/api';
 
 // Icons
 import { 
@@ -480,10 +480,14 @@ function RouteIQApp() {
   };
 
   // Meet Friends Form
-  const [meetOrigin, setMeetOrigin] = useState({ name: '', lat: null, lng: null });
-  const [friends, setFriends] = useState([{ id: 1, name: '', lat: null, lng: null }]);
+  const [meetOrigin, setMeetOrigin] = useState({ name: 'Ghaziabad, Uttar Pradesh', lat: 28.6692, lng: 77.4538 });
+  const [friends, setFriends] = useState([
+    { id: 1, name: 'Friend 1', locationName: 'Model Town, Delhi', lat: 28.7027, lng: 77.1942 },
+    { id: 2, name: 'Friend 2', locationName: 'Samaypur Badli, Delhi', lat: 28.7455, lng: 77.1415 }
+  ]);
   const [meetMidpointResult, setMeetMidpointResult] = useState(null);
   const [meetLoading, setMeetLoading] = useState(false);
+  const [editingFriendId, setEditingFriendId] = useState(null);
 
   // Find Midpoint Form
   const [midpointOrigin, setMidpointOrigin] = useState({ name: '', lat: null, lng: null });
@@ -756,6 +760,42 @@ function RouteIQApp() {
         });
     }
   }, [currentView, lastCompletedJourney]);
+
+  // Load real-time meeting spots from the backend agent
+  useEffect(() => {
+    if (currentView === 'meet_friends') {
+      const activeFriends = friends.filter(f => f.lat && f.lng);
+      if (meetOrigin.lat && meetOrigin.lng && activeFriends.length > 0) {
+        const locations = [
+          { name: meetOrigin.name, lat: meetOrigin.lat, lng: meetOrigin.lng },
+          ...activeFriends.map(f => ({ name: f.locationName || f.name || 'Friend', lat: f.lat, lng: f.lng }))
+        ];
+        const names = [
+          'You',
+          ...activeFriends.map((f, i) => f.name || `Friend ${i + 1}`)
+        ];
+
+        setMeetLoading(true);
+        meetFriends(locations, names)
+          .then(data => {
+            if (data?.spots && data.spots.length > 0) {
+              setMeetMidpointResult(data);
+              // Only change activeSpot if the current activeSpot is not in the new list
+              const exists = data.spots.some(s => s.name === activeSpot);
+              if (!exists) {
+                setActiveSpot(data.spots[0].name);
+              }
+            }
+          })
+          .catch(err => {
+            console.error('Error fetching meeting spots:', err);
+          })
+          .finally(() => {
+            setMeetLoading(false);
+          });
+      }
+    }
+  }, [currentView, meetOrigin.lat, meetOrigin.lng, JSON.stringify(friends)]);
 
   // Form time verification
   const handleTimeChange = (val) => {
@@ -3609,7 +3649,8 @@ function RouteIQApp() {
                       route,
                       comparison,
                       destination,
-                      origin
+                      origin,
+                      timerSecondsAtEnd: timerSeconds
                     };
                     setLastCompletedJourney(completedData);
                     endJourney();
@@ -3627,15 +3668,17 @@ function RouteIQApp() {
 
       {/* VIEW: JOURNEY COMPLETE */}
       {currentView === 'journey_complete' && (() => {
+        const progress = (180 - (lastCompletedJourney?.timerSecondsAtEnd ?? 0)) / 180;
+        const endedEarly = progress < 0.95;
         const totalDist = parseFloat(lastCompletedJourney?.route?.distanceKm || 12.1);
-        const traveledDist = parseFloat((totalDist * 0.71).toFixed(1));
+        const traveledDist = parseFloat((totalDist * progress).toFixed(1));
         const remainingDist = parseFloat((totalDist - traveledDist).toFixed(1));
         const totalTime = parseInt(lastCompletedJourney?.route?.totalMinutes || 32);
-        const elapsedTime = parseInt((totalTime * 0.56).toFixed(0));
+        const elapsedTime = parseInt((totalTime * progress).toFixed(0));
         const estCost = lastCompletedJourney?.route?.costEstimate || 22;
-        const co2Saved = lastCompletedJourney?.comparison?.co2Saved || 0.18;
-        const moneySaved = lastCompletedJourney?.comparison?.moneySaved || 132;
-        const cabCost = Math.round(estCost + moneySaved);
+        const co2Saved = parseFloat(((lastCompletedJourney?.comparison?.co2Saved || 0.18) * progress).toFixed(2));
+        const moneySaved = Math.round((lastCompletedJourney?.comparison?.moneySaved || 132) * progress);
+        const cabCost = Math.round(estCost + (lastCompletedJourney?.comparison?.moneySaved || 132));
         
         return (
           <div className="h-full flex flex-col justify-between relative page-enter text-slate-800 bg-slate-50/60 overflow-y-auto">
@@ -3668,22 +3711,32 @@ function RouteIQApp() {
             {/* Scrollable Content Container */}
             <div className="flex-1 p-6 space-y-6">
               
-              {/* Card 1: Journey ended early warning */}
-              <div className="bg-gradient-to-r from-rose-50 to-pink-50/20 border border-rose-100/50 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
+              {/* Card 1: Journey ended early or completed warning/success */}
+              <div className={`border rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden ${
+                endedEarly 
+                  ? 'bg-gradient-to-r from-rose-50 to-pink-50/20 border-rose-100/50' 
+                  : 'bg-gradient-to-r from-emerald-50 to-teal-50/20 border-emerald-100/50'
+              }`}>
                 
-                {/* Warning text side */}
-                <div className="flex items-start gap-4 z-10">
-                  <div className="w-12 h-12 rounded-full bg-rose-500 flex items-center justify-center text-white shadow-lg shadow-rose-500/25 flex-shrink-0">
-                    <AlertTriangle className="w-6 h-6 text-white" />
+                {/* Text side */}
+                <div className="flex items-start gap-4 z-10 text-left">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg flex-shrink-0 ${
+                    endedEarly ? 'bg-rose-500 shadow-rose-500/25' : 'bg-emerald-500 shadow-emerald-500/25'
+                  }`}>
+                    {endedEarly ? <AlertTriangle className="w-6 h-6 text-white" /> : <CheckCircle className="w-6 h-6 text-white" />}
                   </div>
                   <div className="space-y-1.5 text-left">
-                    <h3 className="text-lg font-extrabold text-rose-600 tracking-tight">Journey ended early</h3>
+                    <h3 className={`text-lg font-extrabold tracking-tight ${endedEarly ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      {endedEarly ? 'Journey ended early' : 'Journey completed!'}
+                    </h3>
                     <p className="text-xs text-slate-500 font-semibold leading-relaxed max-w-sm">
-                      We noticed you stopped tracking before reaching your destination.
+                      {endedEarly 
+                        ? 'We noticed you stopped tracking before reaching your destination.' 
+                        : 'Great job utilizing public transit. You reached your destination on time.'}
                     </p>
-                    <div className="flex items-center gap-2 text-xs font-bold text-rose-500 pt-1">
-                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                      You are {remainingDist} km away from your destination
+                    <div className={`flex items-center gap-2 text-xs font-bold pt-1 ${endedEarly ? 'text-rose-500' : 'text-emerald-600'}`}>
+                      <span className={`w-2 h-2 rounded-full ${endedEarly ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`} />
+                      {endedEarly ? `You are ${remainingDist} km away from your destination` : 'You have arrived at your destination'}
                     </div>
                   </div>
                 </div>
@@ -3691,7 +3744,7 @@ function RouteIQApp() {
                 {/* Styled SVG Map Graphic */}
                 <div className="w-full md:w-48 h-24 flex items-center justify-center relative flex-shrink-0">
                   {/* Cityscape background silhouette */}
-                  <svg className="absolute bottom-0 left-0 right-0 w-full h-12 text-rose-100 opacity-60" viewBox="0 0 200 50" fill="currentColor">
+                  <svg className={`absolute bottom-0 left-0 right-0 w-full h-12 opacity-60 ${endedEarly ? 'text-rose-100' : 'text-emerald-100'}`} viewBox="0 0 200 50" fill="currentColor">
                     <rect x="10" y="20" width="15" height="30" rx="1" />
                     <rect x="30" y="10" width="20" height="40" rx="1" />
                     <rect x="55" y="25" width="12" height="25" rx="1" />
@@ -3707,7 +3760,7 @@ function RouteIQApp() {
                     <path 
                       d="M 15,80 C 50,60 80,90 120,60 C 140,45 160,30 185,20" 
                       fill="none" 
-                      stroke="url(#roseGradient)" 
+                      stroke={endedEarly ? 'url(#roseGradient)' : 'url(#emeraldGradient)'} 
                       strokeWidth="3" 
                       strokeDasharray="6,4" 
                     />
@@ -3716,13 +3769,28 @@ function RouteIQApp() {
                         <stop offset="0%" stopColor="#ef4444" />
                         <stop offset="100%" stopColor="#6366f1" />
                       </linearGradient>
+                      <linearGradient id="emeraldGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#10b981" />
+                        <stop offset="100%" stopColor="#6366f1" />
+                      </linearGradient>
                     </defs>
-                    {/* Start (Travelled up to X) */}
-                    <circle cx="120" cy="60" r="10" fill="#ef4444" className="animate-ping opacity-25" />
-                    <circle cx="120" cy="60" r="7" fill="#ef4444" />
-                    <text x="120" y="63" fill="white" fontSize="9" fontWeight="bold" textAnchor="middle">×</text>
                     
-                    {/* End destination */}
+                    {/* End position marker */}
+                    {endedEarly ? (
+                      <>
+                        <circle cx="120" cy="60" r="10" fill="#ef4444" className="animate-ping opacity-25" />
+                        <circle cx="120" cy="60" r="7" fill="#ef4444" />
+                        <text x="120" y="63" fill="white" fontSize="9" fontWeight="bold" textAnchor="middle">×</text>
+                      </>
+                    ) : (
+                      <>
+                        <circle cx="185" cy="20" r="10" fill="#10b981" className="animate-ping opacity-25" />
+                        <circle cx="185" cy="20" r="7" fill="#10b981" />
+                        <text x="185" y="23" fill="white" fontSize="7" fontWeight="bold" textAnchor="middle">✓</text>
+                      </>
+                    )}
+                    
+                    {/* Destination pin */}
                     <circle cx="185" cy="20" r="12" fill="#6366f1" className="opacity-15" />
                     <path 
                       d="M 185,8 C 181,8 178,11 178,15 C 178,20 185,27 185,27 C 185,27 192,20 192,15 C 192,11 189,8 185,8 Z" 
@@ -3837,8 +3905,12 @@ function RouteIQApp() {
                       <span className="inline-block px-2.5 py-0.5 rounded bg-indigo-600 text-white font-extrabold text-[8px] uppercase tracking-wider">
                         Best Option
                       </span>
-                      <h4 className="text-sm font-extrabold text-slate-800">Want to reach your destination?</h4>
-                      <p className="text-[11px] text-slate-400 font-bold leading-none">Let's find the best route from your current location.</p>
+                      <h4 className="text-sm font-extrabold text-slate-800">
+                        {endedEarly ? 'Want to reach your destination?' : 'Need a return journey?'}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 font-bold leading-none">
+                        {endedEarly ? "Let's find the best route from your current location." : "Let's find the best route back to your starting location."}
+                      </p>
                       
                       {/* Location timeline details */}
                       <div className="bg-slate-50/50 border border-slate-100 p-4 rounded-2xl space-y-4 relative mt-2">
@@ -3846,9 +3918,13 @@ function RouteIQApp() {
                         <div className="flex gap-3 relative z-10">
                           <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1 flex-shrink-0" />
                           <div className="min-w-0">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Your Current Location</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                              {endedEarly ? 'Your Current Location' : 'Starting Point (Current)'}
+                            </span>
                             <span className="text-xs font-bold text-slate-700 truncate block mt-0.5">
-                              {lastCompletedJourney?.destination?.name || 'Connaught Place, New Delhi'}
+                              {endedEarly 
+                                ? (lastCompletedJourney?.route?.legs?.[Math.min(lastCompletedJourney.route.legs.length - 1, Math.floor(progress * lastCompletedJourney.route.legs.length))]?.instruction?.replace(/^Plan meeting here/i, '')?.replace(/^(Board|Ride|Walk|Fly|Get on|Switch to|Take)/i, '') || 'Connaught Place, New Delhi')
+                                : (lastCompletedJourney?.destination?.name || 'Connaught Place, New Delhi')}
                             </span>
                           </div>
                         </div>
@@ -3859,9 +3935,13 @@ function RouteIQApp() {
                         <div className="flex gap-3 relative z-10">
                           <div className="w-2 h-2 rounded-full bg-rose-500 mt-1 flex-shrink-0" />
                           <div className="min-w-0">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Destination</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                              {endedEarly ? 'Destination' : 'Destination (Return)'}
+                            </span>
                             <span className="text-xs font-bold text-slate-700 truncate block mt-0.5">
-                              {lastCompletedJourney?.destination?.name || 'Ghaziabad, Uttar Pradesh'}
+                              {endedEarly 
+                                ? (lastCompletedJourney?.destination?.name || 'Ghaziabad, Uttar Pradesh')
+                                : (lastCompletedJourney?.origin?.name || 'Ghaziabad, Uttar Pradesh')}
                             </span>
                           </div>
                         </div>
@@ -3871,31 +3951,58 @@ function RouteIQApp() {
                       <div className="grid grid-cols-3 gap-2 mt-2">
                         <div className="bg-slate-50 rounded-xl p-2.5 text-center">
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">New ETA</span>
-                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">18 min</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">
+                            {endedEarly ? `${Math.max(5, Math.round(remainingDist * 2.5))} min` : `${totalTime} min`}
+                          </span>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-2.5 text-center">
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Distance</span>
-                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">9.3 km</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">
+                            {endedEarly ? `${remainingDist} km` : `${totalDist} km`}
+                          </span>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-2.5 text-center">
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Est. Fare</span>
-                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">₹28</span>
+                          <span className="text-xs font-extrabold text-slate-800 block mt-0.5">
+                            ₹{endedEarly ? Math.max(10, Math.round(remainingDist * 3.5)) : estCost}
+                          </span>
                         </div>
                       </div>
                     </div>
                     
                     <button 
                       onClick={() => {
-                        // Reset search forms to re-run planning
-                        setOrigin({ name: lastCompletedJourney?.destination?.name || 'Connaught Place, New Delhi', lat: lastCompletedJourney?.destination?.lat, lng: lastCompletedJourney?.destination?.lng });
-                        setDestination({ name: lastCompletedJourney?.destination?.name || 'Ghaziabad, Uttar Pradesh', lat: lastCompletedJourney?.destination?.lat, lng: lastCompletedJourney?.destination?.lng });
+                        if (endedEarly) {
+                          setOrigin({ 
+                            name: `Near ${lastCompletedJourney?.route?.legs?.[Math.min(lastCompletedJourney.route.legs.length - 1, Math.floor(progress * lastCompletedJourney.route.legs.length))]?.instruction || lastCompletedJourney?.origin?.name}`, 
+                            lat: lastCompletedJourney?.origin?.lat + (lastCompletedJourney?.destination?.lat - lastCompletedJourney?.origin?.lat) * progress, 
+                            lng: lastCompletedJourney?.origin?.lng + (lastCompletedJourney?.destination?.lng - lastCompletedJourney?.origin?.lng) * progress 
+                          });
+                          setDestination({ 
+                            name: lastCompletedJourney?.destination?.name, 
+                            lat: lastCompletedJourney?.destination?.lat, 
+                            lng: lastCompletedJourney?.destination?.lng 
+                          });
+                        } else {
+                          // Return trip! Swap origin and destination
+                          setOrigin({
+                            name: lastCompletedJourney?.destination?.name,
+                            lat: lastCompletedJourney?.destination?.lat,
+                            lng: lastCompletedJourney?.destination?.lng
+                          });
+                          setDestination({
+                            name: lastCompletedJourney?.origin?.name,
+                            lat: lastCompletedJourney?.origin?.lat,
+                            lng: lastCompletedJourney?.origin?.lng
+                          });
+                        }
                         setCurrentView('home');
                         setActiveTab('home_tab');
                       }}
                       className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 shadow-sm"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
-                      Replan Journey
+                      {endedEarly ? 'Replan Journey' : 'Plan Return Trip'}
                     </button>
                   </div>
                   
@@ -4028,64 +4135,122 @@ function RouteIQApp() {
 
       {/* VIEW: MEET FRIENDS */}
       {currentView === 'meet_friends' && (() => {
-        // Spot details mapper
-        const spotDetails = {
-          'Rajiv Chowk Metro Station': {
+        const fallbackSpots = [
+          {
+            name: 'Rajiv Chowk Metro Station',
             desc: 'Central interchange hub, equal metro lines.',
-            score: '96%',
-            walk: '2 min',
-            lines: '4 Metro Lines',
-            linesList: 'Blue, Yellow, Violet, Pink',
-            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
-            friends: [
-              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '45 min', cost: '₹44', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
-              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '35 min', cost: '₹32', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
-              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '40 min', cost: '₹38', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            fairnessScore: 96,
+            walkFromMetro: '2 min',
+            metroLines: '4 Metro Lines',
+            metroLinesList: 'Blue, Yellow, Violet, Pink',
+            whyBest: ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective'],
+            perPerson: [
+              { name: 'You', etaMinutes: 45, costRupees: 44 },
+              { name: 'Friend 1', etaMinutes: 35, costRupees: 32 },
+              { name: 'Friend 2', etaMinutes: 40, costRupees: 38 }
             ]
           },
-          'Cannaught Place': {
-            desc: 'Major interchange and commercial district.',
-            score: '88%',
-            walk: '3 min',
-            lines: '3 Metro Lines',
-            linesList: 'Blue, Yellow, Violet',
-            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
-            friends: [
-              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '48 min', cost: '₹44', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
-              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '38 min', cost: '₹32', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
-              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '42 min', cost: '₹38', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+          {
+            name: 'Connaught Place',
+            desc: 'Central circle. Equal road travel times.',
+            fairnessScore: 88,
+            walkFromMetro: '3 min',
+            metroLines: '3 Metro Lines',
+            metroLinesList: 'Blue, Yellow, Violet',
+            whyBest: ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective'],
+            perPerson: [
+              { name: 'You', etaMinutes: 48, costRupees: 44 },
+              { name: 'Friend 1', etaMinutes: 38, costRupees: 32 },
+              { name: 'Friend 2', etaMinutes: 42, costRupees: 38 }
             ]
           },
-          'New Delhi Railway Station': {
+          {
+            name: 'New Delhi Railway Station',
             desc: 'Railway + Metro connectivity hub.',
-            score: '82%',
-            walk: '5 min',
-            lines: '2 Metro Lines',
-            linesList: 'Yellow, Airport Express',
-            scoreColor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
-            friends: [
-              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '52 min', cost: '₹50', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
-              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '28 min', cost: '₹28', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
-              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '35 min', cost: '₹34', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            fairnessScore: 82,
+            walkFromMetro: '5 min',
+            metroLines: '2 Metro Lines',
+            metroLinesList: 'Yellow, Airport Express',
+            whyBest: ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective'],
+            perPerson: [
+              { name: 'You', etaMinutes: 52, costRupees: 50 },
+              { name: 'Friend 1', etaMinutes: 28, costRupees: 28 },
+              { name: 'Friend 2', etaMinutes: 35, costRupees: 34 }
             ]
           },
-          'Karol Bagh Metro Station': {
+          {
+            name: 'Karol Bagh Metro Station',
             desc: 'Good metro & bus connectivity.',
-            score: '75%',
-            walk: '6 min',
-            lines: '2 Metro Lines',
-            linesList: 'Blue Line, local bus network',
-            scoreColor: 'text-amber-600 bg-amber-50 border-amber-100',
-            friends: [
-              { name: 'You', tag: 'A', loc: 'Ghaziabad, UP', time: '60 min', cost: '₹56', color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
-              { name: 'Friend 1', tag: 'B', loc: 'Model Town, Delhi', time: '45 min', cost: '₹38', color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
-              { name: 'Friend 2', tag: 'C', loc: 'Samaypur Badli, Delhi', time: '38 min', cost: '₹36', color: 'bg-orange-500 text-white', dot: 'bg-orange-500' }
+            fairnessScore: 75,
+            walkFromMetro: '6 min',
+            metroLines: '2 Metro Lines',
+            metroLinesList: 'Blue Line, local bus network',
+            whyBest: ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective'],
+            perPerson: [
+              { name: 'You', etaMinutes: 60, costRupees: 56 },
+              { name: 'Friend 1', etaMinutes: 45, costRupees: 38 },
+              { name: 'Friend 2', etaMinutes: 38, costRupees: 36 }
             ]
           }
+        ];
+
+        const spotsList = meetMidpointResult?.spots && meetMidpointResult.spots.length > 0 ? meetMidpointResult.spots : fallbackSpots;
+        const currentSpot = spotsList.find(s => s.name === activeSpot) || spotsList[0];
+
+        const friendsUIData = currentSpot.perPerson.map((p, idx) => {
+          const colors = [
+            { color: 'bg-emerald-500 text-white', dot: 'bg-emerald-500' },
+            { color: 'bg-indigo-600 text-white', dot: 'bg-indigo-600' },
+            { color: 'bg-orange-500 text-white', dot: 'bg-orange-500' },
+            { color: 'bg-pink-500 text-white', dot: 'bg-pink-500' },
+            { color: 'bg-violet-500 text-white', dot: 'bg-violet-500' }
+          ];
+          const colorPair = colors[idx % colors.length];
+          
+          let locName = 'Unknown';
+          let friendId = null;
+          if (p.name === 'You' || idx === 0) {
+            locName = meetOrigin.name || 'Your Location';
+            friendId = 'user';
+          } else {
+            const f = friends[idx - 1];
+            if (f) {
+              locName = f.locationName || 'Unknown';
+              friendId = f.id;
+            }
+          }
+
+          return {
+            id: friendId,
+            name: p.name,
+            tag: p.name === 'You' ? 'A' : String.fromCharCode(65 + idx),
+            loc: locName,
+            time: `${p.etaMinutes || p.time || 20} min`,
+            cost: `₹${p.costRupees || p.cost || 20}`,
+            color: colorPair.color,
+            dot: colorPair.dot
+          };
+        });
+
+        const getScoreColor = (score) => {
+          const s = parseInt(score);
+          if (s >= 90) return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+          if (s >= 80) return 'text-indigo-600 bg-indigo-50 border-indigo-100';
+          return 'text-amber-600 bg-amber-50 border-amber-100';
         };
 
-        const currentSpot = spotDetails[activeSpot] || spotDetails['Rajiv Chowk Metro Station'];
-        
+        const features = (currentSpot.whyBest || ['Balanced Travel', 'Great Connectivity', 'Easy Access', 'Cost Effective']).map((reason, i) => {
+          const list = [
+            { title: 'Balanced Travel', desc: 'Most equal travel time for everyone', icon: Scale, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
+            { title: 'Great Connectivity', desc: `${currentSpot.metroLines || 'Multiple'} & exits`, icon: Bus, bg: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
+            { title: 'Easy Access', desc: `${currentSpot.walkFromMetro || 'Quick'} walk from metro`, icon: User, bg: 'bg-orange-50 text-orange-600 border-orange-100' },
+            { title: 'Cost Effective', desc: 'Lowest combined travel cost', icon: Leaf, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
+          ];
+          return list.find(l => l.title === reason) || { title: reason, desc: 'Optimized by AI coordinator', icon: Sparkles, bg: 'bg-indigo-50 text-indigo-600 border-indigo-100' };
+        });
+
+        const otherOptions = spotsList.filter(s => s.name !== currentSpot.name);
+
         return (
           <div className="h-full flex flex-col justify-between relative page-enter text-slate-800 bg-slate-50/60 overflow-y-auto">
             
@@ -4102,7 +4267,10 @@ function RouteIQApp() {
                   <ArrowLeft className="w-5 h-5 text-slate-600" />
                 </button>
                 <div className="flex flex-col text-left">
-                  <h2 className="text-base font-extrabold text-slate-800">Meet Friends</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-extrabold text-slate-800">Meet Friends</h2>
+                    {meetLoading && <RefreshCw className="w-3.5 h-3.5 text-indigo-600 animate-spin" />}
+                  </div>
                   <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest leading-none mt-0.5">Transit Midpoint Calculator</span>
                 </div>
               </div>
@@ -4117,32 +4285,67 @@ function RouteIQApp() {
             <div className="flex-1 p-6 space-y-6">
               
               {/* Destination/Meeting point input card */}
-              <div className="bg-white border border-slate-100 rounded-3xl p-4 flex items-center justify-between shadow-sm hover:border-slate-200 transition-all text-left">
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 flex-shrink-0">
-                    <MapPin className="w-5 h-5" />
+              {editingFriendId === 'user' ? (
+                <div className="bg-white border border-indigo-200 rounded-3xl p-4 shadow-md space-y-3 text-left ring-2 ring-indigo-500/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Your Starting Point</span>
+                    <button onClick={() => setEditingFriendId(null)} className="p-1 hover:bg-slate-100 rounded-full">
+                      <X className="w-4 h-4 text-slate-400" />
+                    </button>
                   </div>
-                  <div className="min-w-0">
-                    <h4 className="text-sm font-extrabold text-slate-800 truncate">Ghaziabad, Uttar Pradesh</h4>
-                    <p className="text-[10px] text-indigo-600 font-bold mt-0.5">Find the best meeting point for everyone</p>
-                  </div>
+                  <PlaceSearch
+                    value={meetOrigin}
+                    onChange={setMeetOrigin}
+                    onSelect={setMeetOrigin}
+                    placeholder="Search your starting point..."
+                    icon={MapPin}
+                    iconColor="text-emerald-500"
+                    showMyLocation={true}
+                  />
+                  <button 
+                    onClick={() => setEditingFriendId(null)}
+                    className="w-full text-center py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase rounded-xl transition-colors"
+                  >
+                    Confirm Location
+                  </button>
                 </div>
-                <button 
-                  onClick={() => {
-                    setMeetOrigin({ name: '', lat: null, lng: null });
-                  }} 
-                  className="p-1 hover:bg-slate-100 rounded-full"
+              ) : (
+                <div 
+                  onClick={() => setEditingFriendId('user')}
+                  className="bg-white border border-slate-100 rounded-3xl p-4 flex items-center justify-between shadow-sm hover:border-slate-200 cursor-pointer transition-all text-left"
                 >
-                  <X className="w-4 h-4 text-slate-400" />
-                </button>
-              </div>
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 flex-shrink-0">
+                      <MapPin className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-extrabold text-slate-800 truncate">
+                        {meetOrigin.name || 'Set your location'}
+                      </h4>
+                      <p className="text-[10px] text-indigo-600 font-bold mt-0.5">Your starting point (Click to change)</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMeetOrigin({ name: '', lat: null, lng: null });
+                      setEditingFriendId('user');
+                    }} 
+                    className="p-1 hover:bg-slate-100 rounded-full"
+                  >
+                    <X className="w-4 h-4 text-slate-400" />
+                  </button>
+                </div>
+              )}
 
               {/* Friends list header */}
               <div className="flex justify-between items-center">
-                <h3 className="text-sm font-extrabold text-slate-800">Friends (3)</h3>
+                <h3 className="text-sm font-extrabold text-slate-800">Friends ({friendsUIData.length})</h3>
                 <button 
                   onClick={() => {
-                    handleAddFriend();
+                    const newId = Date.now();
+                    setFriends([...friends, { id: newId, name: `Friend ${friends.length + 1}`, locationName: '', lat: null, lng: null }]);
+                    setEditingFriendId(newId);
                   }}
                   className="text-xs font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                 >
@@ -4153,48 +4356,112 @@ function RouteIQApp() {
 
               {/* Friends Cards Row */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {currentSpot.friends.map((friend, idx) => (
-                  <div 
-                    key={idx} 
-                    className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4 text-left relative overflow-hidden"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${friend.color}`}>
-                        {friend.tag}
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-extrabold text-slate-800">{friend.name}</h4>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <span className={`w-1.5 h-1.5 rounded-full ${friend.dot}`} />
-                          <span className="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">{friend.loc}</span>
+                {friendsUIData.map((friend, idx) => {
+                  const localFriend = friends.find(f => f.id === friend.id);
+                  const isEditing = editingFriendId === friend.id;
+
+                  if (isEditing && friend.id !== 'user') {
+                    return (
+                      <div 
+                        key={friend.id} 
+                        className="bg-white border border-indigo-200 rounded-3xl p-5 shadow-md space-y-4 text-left relative overflow-hidden ring-2 ring-indigo-500/20"
+                      >
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Friend's Name</label>
+                            <input 
+                              type="text" 
+                              value={localFriend?.name || ''} 
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setFriends(prev => prev.map(f => f.id === friend.id ? { ...f, name: val } : f));
+                              }}
+                              placeholder="Friend Name"
+                              className="w-full text-xs font-bold text-slate-800 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                          
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Starting Location</label>
+                            <PlaceSearch
+                              value={{ name: localFriend?.locationName || '', lat: localFriend?.lat, lng: localFriend?.lng }}
+                              onChange={(val) => {
+                                setFriends(prev => prev.map(f => f.id === friend.id ? { ...f, locationName: val.name, lat: val.lat, lng: val.lng } : f));
+                              }}
+                              onSelect={(val) => {
+                                setFriends(prev => prev.map(f => f.id === friend.id ? { ...f, locationName: val.name, lat: val.lat, lng: val.lng } : f));
+                              }}
+                              placeholder="Search location..."
+                              icon={MapPin}
+                              iconColor="text-indigo-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 pt-2 border-t border-slate-50">
+                          <button 
+                            onClick={() => setEditingFriendId(null)}
+                            className="flex-1 text-center py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase rounded-xl transition-colors"
+                          >
+                            Done
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setFriends(prev => prev.filter(f => f.id !== friend.id));
+                              setEditingFriendId(null);
+                            }}
+                            className="px-3 text-center py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-[10px] uppercase rounded-xl transition-colors"
+                          >
+                            Remove
+                          </button>
                         </div>
                       </div>
-                    </div>
+                    );
+                  }
 
-                    {/* Stats inside card */}
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-50">
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                        <Bus className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{friend.time}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                        <Clock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{friend.cost}</span>
-                      </div>
-                    </div>
-
-                    {/* Edit button */}
-                    <button 
-                      onClick={() => {
-                        // Open input to edit friend
-                      }}
-                      className="w-full text-center pt-2 text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center justify-center gap-1 border-t border-slate-50"
+                  return (
+                    <div 
+                      key={idx} 
+                      className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4 text-left relative overflow-hidden"
                     >
-                      <Sparkles className="w-3 h-3" />
-                      Edit
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${friend.color}`}>
+                          {friend.tag}
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-extrabold text-slate-800">{friend.name}</h4>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className={`w-1.5 h-1.5 rounded-full ${friend.dot}`} />
+                            <span className="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">{friend.loc}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stats inside card */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-50">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                          <Bus className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{friend.time}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{friend.cost}</span>
+                        </div>
+                      </div>
+
+                      {/* Edit button */}
+                      <button 
+                        onClick={() => {
+                          setEditingFriendId(friend.id);
+                        }}
+                        className="w-full text-center pt-2 text-[10px] font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center justify-center gap-1 border-t border-slate-50"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        Edit
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Best Meeting Point Card */}
@@ -4207,13 +4474,13 @@ function RouteIQApp() {
                   </div>
                   <div className="space-y-1">
                     <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-widest block">Best Meeting Point</span>
-                    <h3 className="text-base font-extrabold text-slate-900">{activeSpot}</h3>
+                    <h3 className="text-base font-extrabold text-slate-900">{currentSpot.name}</h3>
                     <p className="text-xs text-slate-500 font-semibold">{currentSpot.desc}</p>
                     
                     {/* Fairness Score badge */}
                     <div className="flex items-center gap-1.5 pt-1">
-                      <div className={`px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wide flex items-center gap-1 ${currentSpot.scoreColor}`}>
-                        <span>Fairness Score: {currentSpot.score}</span>
+                      <div className={`px-2 py-0.5 rounded-full border text-[9px] font-extrabold uppercase tracking-wide flex items-center gap-1 ${getScoreColor(currentSpot.fairnessScore)}`}>
+                        <span>Fairness Score: {currentSpot.fairnessScore}%</span>
                       </div>
                       <HelpCircle className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
                     </div>
@@ -4225,15 +4492,15 @@ function RouteIQApp() {
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
                     <User className="w-4 h-4 text-slate-400" />
                     <div>
-                      <span>{currentSpot.walk}</span>
+                      <span>{currentSpot.walkFromMetro}</span>
                       <span className="text-[10px] text-slate-400 font-semibold block">Walk from metro</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
                     <Bus className="w-4 h-4 text-slate-400" />
                     <div>
-                      <span>{currentSpot.lines}</span>
-                      <span className="text-[10px] text-slate-400 font-semibold block">{currentSpot.linesList}</span>
+                      <span>{currentSpot.metroLines}</span>
+                      <span className="text-[10px] text-slate-400 font-semibold block">{currentSpot.metroLinesList}</span>
                     </div>
                   </div>
                 </div>
@@ -4265,77 +4532,76 @@ function RouteIQApp() {
                   
                   {/* Colored route lines converging at center */}
                   <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 500 300">
-                    {/* Green Path from A (top left/mid) to Center */}
-                    <path 
-                      d="M 80,110 C 120,110 180,180 250,150" 
-                      fill="none" 
-                      stroke="#10b981" 
-                      strokeWidth="5" 
-                      strokeLinecap="round"
-                    />
-                    
-                    {/* Blue Path from B (top right) to Center */}
-                    <path 
-                      d="M 380,80 C 340,80 300,110 250,150" 
-                      fill="none" 
-                      stroke="#4f46e5" 
-                      strokeWidth="5" 
-                      strokeLinecap="round"
-                    />
-                    
-                    {/* Orange Path from C (bottom right) to Center */}
-                    <path 
-                      d="M 400,240 C 350,240 300,200 250,150" 
-                      fill="none" 
-                      stroke="#f97316" 
-                      strokeWidth="5" 
-                      strokeLinecap="round"
-                    />
+                    {friendsUIData.map((friend, idx) => {
+                      const paths = [
+                        "M 80,110 C 120,110 180,180 250,150",
+                        "M 380,80 C 340,80 300,110 250,150",
+                        "M 400,240 C 350,240 300,200 250,150",
+                        "M 120,250 C 160,250 200,200 250,150",
+                        "M 200,50 C 210,90 230,120 250,150"
+                      ];
+                      const strokeColors = ["#10b981", "#4f46e5", "#f97316", "#ec4899", "#8b5cf6"];
+                      return (
+                        <path 
+                          key={idx}
+                          d={paths[idx % paths.length] || paths[0]} 
+                          fill="none" 
+                          stroke={strokeColors[idx % strokeColors.length]} 
+                          strokeWidth="5" 
+                          strokeLinecap="round"
+                        />
+                      );
+                    })}
                   </svg>
 
                   {/* Absolute overlay badges for markers */}
-                  {/* Center Midpoint Marker (Rajiv Chowk) */}
+                  {/* Center Midpoint Marker */}
                   <div className="absolute top-[150px] left-[250px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
                     <div className="w-10 h-10 rounded-full bg-indigo-600 border-4 border-white shadow-lg flex items-center justify-center text-white">
                       <Bus className="w-4 h-4 text-white" />
                     </div>
                     <span className="bg-white/95 border border-slate-100 px-2 py-0.5 rounded shadow-sm text-[9px] font-extrabold text-slate-800 mt-1 uppercase tracking-wider">
-                      {activeSpot.split(' ')[0]}
+                      {currentSpot.name.split(' ')[0]}
                     </span>
                   </div>
 
-                  {/* Marker A (Ghaziabad) */}
-                  <div className="absolute top-[110px] left-[80px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
-                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-white font-extrabold text-[9px]">A</div>
-                      <span className="text-[10px] font-bold text-slate-700">Ghaziabad</span>
-                    </div>
-                    <div className="bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-emerald-700 mt-1">
-                      45 min • ₹44
-                    </div>
-                  </div>
+                  {/* Friend Location Markers */}
+                  {friendsUIData.map((friend, idx) => {
+                    const coords = [
+                      { top: 110, left: 80 },
+                      { top: 80, left: 380 },
+                      { top: 240, left: 400 },
+                      { top: 250, left: 120 },
+                      { top: 50, left: 200 }
+                    ];
+                    const pos = coords[idx % coords.length];
+                    const badgeBgs = [
+                      "bg-emerald-50 border-emerald-100 text-emerald-700",
+                      "bg-indigo-50 border-indigo-100 text-indigo-700",
+                      "bg-orange-50 border-orange-100 text-orange-700",
+                      "bg-pink-50 border-pink-100 text-pink-700",
+                      "bg-violet-50 border-violet-100 text-violet-700"
+                    ];
+                    const badgeClass = badgeBgs[idx % badgeBgs.length];
 
-                  {/* Marker B (Model Town) */}
-                  <div className="absolute top-[80px] left-[380px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
-                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-white font-extrabold text-[9px]">B</div>
-                      <span className="text-[10px] font-bold text-slate-700">Model Town</span>
-                    </div>
-                    <div className="bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-indigo-700 mt-1">
-                      35 min • ₹32
-                    </div>
-                  </div>
-
-                  {/* Marker C (Samaypur Badli) */}
-                  <div className="absolute top-[240px] left-[400px] -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center">
-                    <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-white font-extrabold text-[9px]">C</div>
-                      <span className="text-[10px] font-bold text-slate-700">Samaypur Badli</span>
-                    </div>
-                    <div className="bg-orange-50 border border-orange-100 px-2 py-0.5 rounded shadow-sm text-[8px] font-bold text-orange-700 mt-1">
-                      40 min • ₹38
-                    </div>
-                  </div>
+                    return (
+                      <div 
+                        key={idx} 
+                        style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+                        className="absolute -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center"
+                      >
+                        <div className="flex items-center gap-1 bg-white/95 border border-slate-100 rounded-xl px-2 py-1 shadow-sm">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[9px] ${friend.color}`}>
+                            {friend.tag}
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-700 max-w-[80px] truncate">{friend.name}</span>
+                        </div>
+                        <div className={`border px-2 py-0.5 rounded shadow-sm text-[8px] font-bold mt-1 ${badgeClass}`}>
+                          {friend.time} • {friend.cost}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Left Side Map Controls Overlay */}
@@ -4373,12 +4639,7 @@ function RouteIQApp() {
                 </div>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  {[
-                    { title: 'Balanced Travel', desc: 'Most equal travel time for everyone', icon: Scale, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
-                    { title: 'Great Connectivity', desc: '4 metro lines & multiple exits', icon: Bus, bg: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
-                    { title: 'Easy Access', desc: '2 min walking from metro', icon: User, bg: 'bg-orange-50 text-orange-600 border-orange-100' },
-                    { title: 'Cost Effective', desc: 'Lowest combined travel cost', icon: Leaf, bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
-                  ].map((feat, i) => {
+                  {features.map((feat, i) => {
                     const Icon = feat.icon;
                     return (
                       <div 
@@ -4403,11 +4664,7 @@ function RouteIQApp() {
                 <h3 className="text-sm font-extrabold text-slate-800">Other Good Options</h3>
 
                 <div className="space-y-3">
-                  {[
-                    { name: 'Cannaught Place', desc: 'Major interchange', score: '88%', walk: '3 min walk', lines: '3 metro lines' },
-                    { name: 'New Delhi Railway Station', desc: 'Railway + Metro connectivity', score: '82%', walk: '5 min walk', lines: '2 metro lines' },
-                    { name: 'Karol Bagh Metro Station', desc: 'Good metro & bus connectivity', score: '75%', walk: '6 min walk', lines: '2 metro lines' }
-                  ].map((opt, i) => (
+                  {otherOptions.map((opt, i) => (
                     <div 
                       key={i} 
                       className={`bg-white border rounded-3xl p-4 transition-all shadow-sm space-y-3.5 text-left ${
@@ -4439,14 +4696,14 @@ function RouteIQApp() {
                         {/* Fairness Score */}
                         <div className="bg-emerald-50/50 border border-emerald-100/30 rounded-xl py-1.5 px-2 text-center flex flex-col justify-center items-center">
                           <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wide leading-none">Fairness</span>
-                          <span className="text-xs font-extrabold text-emerald-600 block mt-1 leading-none">{opt.score}</span>
+                          <span className="text-xs font-extrabold text-emerald-600 block mt-1 leading-none">{opt.fairnessScore}%</span>
                         </div>
                         
                         {/* Walk Time */}
                         <div className="bg-slate-50 border border-slate-100/50 rounded-xl py-1.5 px-2 flex flex-col justify-center items-center">
                           <div className="flex items-center gap-1">
                             <User className="w-3 h-3 text-slate-400" />
-                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.walk.split(' ')[0]} min</span>
+                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.walkFromMetro}</span>
                           </div>
                           <span className="text-[7px] font-bold text-slate-400 uppercase tracking-wider mt-1 leading-none">Walk</span>
                         </div>
@@ -4455,7 +4712,7 @@ function RouteIQApp() {
                         <div className="bg-slate-50 border border-slate-100/50 rounded-xl py-1.5 px-2 flex flex-col justify-center items-center">
                           <div className="flex items-center gap-1">
                             <Bus className="w-3 h-3 text-slate-400" />
-                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.lines.split(' ')[0]} lines</span>
+                            <span className="text-[9px] font-extrabold text-slate-700 leading-none">{opt.metroLines}</span>
                           </div>
                           <span className="text-[7px] font-bold text-slate-400 uppercase tracking-wider mt-1 leading-none">Metro</span>
                         </div>
@@ -4471,8 +4728,8 @@ function RouteIQApp() {
             <div className="p-6 bg-white border-t border-slate-100 flex-shrink-0">
               <button
                 onClick={() => {
-                  setOrigin({ name: activeSpot, lat: 28.6328, lng: 77.2197 });
-                  setDestination({ name: 'Ghaziabad, Uttar Pradesh', lat: 28.6692, lng: 77.4538 });
+                  setOrigin({ name: currentSpot.name, lat: currentSpot.lat, lng: currentSpot.lng });
+                  setDestination({ name: meetOrigin.name, lat: meetOrigin.lat, lng: meetOrigin.lng });
                   setCurrentView('home');
                   setActiveTab('home_tab');
                 }}
