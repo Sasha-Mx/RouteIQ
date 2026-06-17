@@ -120,8 +120,29 @@ export default function MapView({
       polylineRef.current = null;
     }
 
-    if (polyline && polyline.length > 1) {
-      polylineRef.current = L.polyline(polyline, {
+    // Sanitize polyline input to ensure Leaflet doesn't crash on invalid coordinates
+    let cleanPolyline = [];
+    if (Array.isArray(polyline)) {
+      cleanPolyline = polyline
+        .map(pt => {
+          if (!pt) return null;
+          if (Array.isArray(pt)) {
+            const lat = parseFloat(pt[0]);
+            const lng = parseFloat(pt[1]);
+            return (!isNaN(lat) && !isNaN(lng)) ? [lat, lng] : null;
+          }
+          if (typeof pt === 'object') {
+            const lat = parseFloat(pt.lat ?? pt.latitude);
+            const lng = parseFloat(pt.lng ?? pt.longitude);
+            return (!isNaN(lat) && !isNaN(lng)) ? [lat, lng] : null;
+          }
+          return null;
+        })
+        .filter(Boolean);
+    }
+
+    if (cleanPolyline.length > 1) {
+      polylineRef.current = L.polyline(cleanPolyline, {
         color: '#584CF4', // Premium Indigo
         weight: 6,
         opacity: 0.9,
@@ -146,7 +167,12 @@ export default function MapView({
       originMarkerRef.current.remove();
       originMarkerRef.current = null;
     }
-    if (originCoords) {
+    
+    const originLat = parseFloat(originCoords?.[0] ?? originCoords?.lat);
+    const originLng = parseFloat(originCoords?.[1] ?? originCoords?.lng);
+    const validOrigin = (!isNaN(originLat) && !isNaN(originLng)) ? [originLat, originLng] : null;
+
+    if (validOrigin) {
       const originIcon = L.divIcon({
         html: `
           <div class="relative flex items-center justify-center w-6 h-6">
@@ -160,7 +186,7 @@ export default function MapView({
         iconSize: [24, 24],
         iconAnchor: [12, 12]
       });
-      originMarkerRef.current = L.marker(originCoords, { icon: originIcon }).addTo(map);
+      originMarkerRef.current = L.marker(validOrigin, { icon: originIcon }).addTo(map);
     }
 
     // Destination Pin (Beautiful glowing pointer)
@@ -168,7 +194,12 @@ export default function MapView({
       destMarkerRef.current.remove();
       destMarkerRef.current = null;
     }
-    if (destCoords) {
+    
+    const destLat = parseFloat(destCoords?.[0] ?? destCoords?.lat);
+    const destLng = parseFloat(destCoords?.[1] ?? destCoords?.lng);
+    const validDest = (!isNaN(destLat) && !isNaN(destLng)) ? [destLat, destLng] : null;
+
+    if (validDest) {
       const destIcon = L.divIcon({
         html: `
           <div class="relative flex items-center justify-center w-8 h-8">
@@ -184,17 +215,17 @@ export default function MapView({
         iconSize: [32, 32],
         iconAnchor: [16, 16]
       });
-      destMarkerRef.current = L.marker(destCoords, { icon: destIcon }).addTo(map);
+      destMarkerRef.current = L.marker(validDest, { icon: destIcon }).addTo(map);
     }
 
     // Auto-pan / fit bounds to contain the newly set markers
-    if (originCoords && destCoords) {
+    if (validOrigin && validDest) {
       const group = L.featureGroup([originMarkerRef.current, destMarkerRef.current].filter(Boolean));
       map.fitBounds(group.getBounds(), { padding: [60, 60] });
-    } else if (originCoords) {
-      map.setView(originCoords, 14, { animate: true });
-    } else if (destCoords) {
-      map.setView(destCoords, 14, { animate: true });
+    } else if (validOrigin) {
+      map.setView(validOrigin, 14, { animate: true });
+    } else if (validDest) {
+      map.setView(validDest, 14, { animate: true });
     }
   }, [originCoords, destCoords, isLeafletLoaded]);
 

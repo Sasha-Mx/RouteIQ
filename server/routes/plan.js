@@ -280,17 +280,22 @@ router.post('/', async (req, res) => {
   try {
     const { origin, destination, originLat, originLng, destLat, destLng, arrivalTime, timeType = 'leave_by', preference = 'fastest' } = req.body;
 
-    if (!originLat || !destLat) {
-      return res.status(400).json({ error: 'Origin and destination coordinates are required' });
+    const oLat = parseFloat(originLat);
+    const oLng = parseFloat(originLng);
+    const dLat = parseFloat(destLat);
+    const dLng = parseFloat(destLng);
+
+    if (isNaN(oLat) || isNaN(oLng) || isNaN(dLat) || isNaN(dLng)) {
+      return res.status(400).json({ error: 'Origin and destination coordinates are required and must be valid numbers' });
     }
 
-    const distKm = distanceFromLatLng(originLat, originLng, destLat, destLng);
+    const distKm = distanceFromLatLng(oLat, oLng, dLat, dLng);
     const peak = isPeakHour();
 
     // ── Step 1: AI-powered route planning (via OpenRouter → Gemini) ──
     let routes;
     const aiRoutes = await generateRouteLegsWithAI(
-      origin, destination, originLat, originLng, destLat, destLng, distKm, preference
+      origin, destination, oLat, oLng, dLat, dLng, distKm, preference
     );
 
     if (aiRoutes && aiRoutes.length >= 1) {
@@ -307,7 +312,7 @@ router.post('/', async (req, res) => {
           liveEta: r.liveEta || '',
           polyline: (r.polyline && r.polyline.length >= 2) 
             ? r.polyline 
-            : [[originLat, originLng], [(originLat + destLat) / 2 + 0.005 * (i - 1), (originLng + destLng) / 2 - 0.005 * (i - 1)], [destLat, destLng]],
+            : [[oLat, oLng], [(oLat + dLat) / 2 + 0.005 * (i - 1), (oLng + dLng) / 2 - 0.005 * (i - 1)], [dLat, dLng]],
           legs: r.legs || buildFallbackLegs(origin, destination, distKm, label)
         };
       });
@@ -324,7 +329,7 @@ router.post('/', async (req, res) => {
           arrivalTime,
           confidence: 85 - idx * 5,
           liveEta: '',
-          polyline: [[originLat, originLng], [(originLat + destLat) / 2, (originLng + destLng) / 2], [destLat, destLng]],
+          polyline: [[oLat, oLng], [(oLat + dLat) / 2, (oLng + dLng) / 2], [dLat, dLng]],
           legs: buildFallbackLegs(origin, destination, distKm, label)
         });
       }
@@ -342,7 +347,7 @@ router.post('/', async (req, res) => {
           arrivalTime,
           confidence: 82,
           liveEta: '',
-          polyline: [[originLat, originLng], [(originLat + destLat) / 2 + 0.01, (originLng + destLng) / 2 - 0.01], [destLat, destLng]],
+          polyline: [[oLat, oLng], [(oLat + dLat) / 2 + 0.01, (oLng + dLng) / 2 - 0.01], [dLat, dLng]],
           legs: buildFallbackLegs(origin, destination, distKm, 'fastest')
         },
         {
@@ -353,7 +358,7 @@ router.post('/', async (req, res) => {
           arrivalTime,
           confidence: 75,
           liveEta: '',
-          polyline: [[originLat, originLng], [(originLat + destLat) / 2 - 0.01, (originLng + destLng) / 2 + 0.01], [destLat, destLng]],
+          polyline: [[oLat, oLng], [(oLat + dLat) / 2 - 0.01, (oLng + dLng) / 2 + 0.01], [dLat, dLng]],
           legs: buildFallbackLegs(origin, destination, distKm, 'cheapest')
         },
         {
@@ -364,7 +369,7 @@ router.post('/', async (req, res) => {
           arrivalTime,
           confidence: 80,
           liveEta: '',
-          polyline: [[originLat, originLng], [(originLat + destLat) / 2, (originLng + destLng) / 2], [destLat, destLng]],
+          polyline: [[oLat, oLng], [(oLat + dLat) / 2, (oLng + dLng) / 2], [dLat, dLng]],
           legs: buildFallbackLegs(origin, destination, distKm, 'comfort')
         }
       ];
